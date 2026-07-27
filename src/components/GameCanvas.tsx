@@ -2093,8 +2093,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         swapWeapon(false);
       }
 
-      // Q: Drop weapon
-      if (key === 'q' && game.hasWeapon && !game.isReloading && !game.playerIsDead) {
+      // Q: Drop weapon (campaign only)
+      if (key === 'q' && config.isCampaign && game.hasWeapon && !game.isReloading && !game.playerIsDead) {
         const dropGroup = new THREE.Group();
         // Simple weapon box on ground
         const boxGeo = new THREE.BoxGeometry(0.3, 0.15, 0.08);
@@ -2124,8 +2124,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // E: Pick up weapon (only when holding nothing)
-      if (key === 'e' && !game.hasWeapon && !game.playerIsDead && game.groundWeapons.length > 0) {
+      // E: Pick up weapon (campaign only, only when holding nothing)
+      if (key === 'e' && config.isCampaign && !game.hasWeapon && !game.playerIsDead && game.groundWeapons.length > 0) {
         let closestIdx = -1;
         let closestDist = 3; // pickup range
         for (let i = 0; i < game.groundWeapons.length; i++) {
@@ -2908,6 +2908,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Check if score limit reached
     const checkWinCondition = () => {
       if (config.isMultiplayer) return false; // In multiplayer, match_ended is sent by the server
+      if (config.isCampaign) return false; // No win-by-score in campaign missions
 
       // Team mode: check if any team reached score limit
       if (teamMode) {

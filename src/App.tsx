@@ -359,6 +359,7 @@ export default function App() {
       botCount: 0,
       difficulty: 'EASY',
       gameMode: 'FFA',
+      isCampaign: true,
     };
     setMatchConfig(tutorialConfig);
     setPlayerClass(assaultClass);

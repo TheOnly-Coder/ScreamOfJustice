@@ -124,6 +124,7 @@ export interface MatchConfig {
   spectatorMode?: boolean;
   gameMode?: GameMode;
   playerTeamId?: number;
+  isCampaign?: boolean;
 }
 
 export interface TouchBindings {
