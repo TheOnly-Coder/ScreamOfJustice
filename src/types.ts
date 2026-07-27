@@ -909,6 +909,23 @@ export const CLASSES: CharacterClass[] = [
       description: 'Become semi-invisible and move completely silently for 5 seconds.',
       cooldown: 16,
     }
+  },
+  {
+    id: 'strategizer',
+    name: 'Strategizer',
+    codename: 'MOBILITY',
+    description: 'Master of battlefield traversal armed with a heavy pump shotgun for close-quarters dominance and an RPG-7 for explosive hit-and-run tactics. The recoil from both weapons propels them across the map — bunny hop, rocket jump, and shotgun-surf your way to victory.',
+    primaryWeapon: WEAPONS.hs0405_shotgun,
+    secondaryWeapon: WEAPONS.rpg7_rocket,
+    maxHealth: 155,
+    speed: 1.15,
+    color: '#1c1917', // Dark stone
+    accentColor: '#f97316', // Orange
+    ability: {
+      name: 'Launch Pad',
+      description: 'Deploys a directional launch pad that catapults you forward at extreme velocity for 0.5 seconds. Perfect for escaping or closing gaps instantly.',
+      cooldown: 20,
+    }
   }
 ];
 

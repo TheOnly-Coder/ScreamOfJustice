@@ -608,6 +608,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     particles: THREE.Points | null;
     particleData: { pos: THREE.Vector3; vel: THREE.Vector3; color: THREE.Color; life: number; maxLife: number }[];
 
+    // Ammo pickups
+    ammoPickups: { mesh: THREE.Group; life: number; ammoAmount: number }[];
+
+    // Bunny hop
+    bunnyHopBoost: number; // 0.0 to 0.2 (the extra multiplier on top of 1.0)
+    wasOnGround: boolean;
+    bunnyHopConsecutiveJumps: number;
+
     // Weapon visual meshes rigged to camera
     weaponGroup: THREE.Group | null;
     weaponMesh: THREE.Mesh | null;
@@ -683,6 +691,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     muzzleFlashTimer: 0,
     particles: null,
     particleData: [],
+    ammoPickups: [],
+    bunnyHopBoost: 0,
+    wasOnGround: true,
+    bunnyHopConsecutiveJumps: 0,
     weaponGroup: null,
     weaponMesh: null,
     wantsToFire: false,
@@ -2254,6 +2266,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         game.pitch += (Math.random() * 0.05 + 0.05) * game.activeWeapon.recoil;
       }
 
+      // Weapon knockback impulse flag (used in movement update)
+      const weaponId = game.activeWeapon.id;
+      if (weaponId === 'rpg7_rocket' || weaponId === 'hs0405_shotgun' || weaponId === 'krm_shotgun' || weaponId === 'by15_shotgun') {
+        game._lastShotKnockback = 1.0; // Full impulse, decays over ~125ms
+      }
+
       // Perform shot checks (Headshot vs standard body vs wall collision)
       const targets: { bot: BotEntity; part: 'head' | 'body'; mesh: THREE.Mesh }[] = [];
       const onlineTargets: { playerObj: any; part: 'head' | 'body'; mesh: THREE.Mesh }[] = [];
@@ -2412,6 +2430,65 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     };
 
+    // Spawn spinning ammo pickup at a position
+    const spawnAmmoPickup = (position: THREE.Vector3) => {
+      const group = new THREE.Group();
+      group.position.copy(position);
+      group.position.y = 0.25;
+
+      const ammoMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 0.9, roughness: 0.2 });
+      const casingMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.8, roughness: 0.3 });
+
+      // Base plate (circular)
+      const baseGeo = new THREE.CylinderGeometry(0.25, 0.28, 0.05, 8);
+      const base = new THREE.Mesh(baseGeo, casingMat);
+      base.position.y = -0.1;
+      group.add(base);
+
+      // Bundle of bullets - 5 bullets arranged in a circle + 1 in center
+      const bulletGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.3, 6);
+      const bulletTipGeo = new THREE.ConeGeometry(0.025, 0.06, 6);
+
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2;
+        const bx = Math.cos(angle) * 0.12;
+        const bz = Math.sin(angle) * 0.12;
+
+        const bullet = new THREE.Mesh(bulletGeo, ammoMat);
+        bullet.position.set(bx, 0.1, bz);
+        bullet.rotation.z = Math.PI / 2;
+        bullet.rotation.y = angle;
+        group.add(bullet);
+
+        const tip = new THREE.Mesh(bulletTipGeo, ammoMat);
+        tip.position.set(bx + Math.cos(angle) * 0.18, 0.1, bz + Math.sin(angle) * 0.18);
+        tip.rotation.z = Math.PI / 2;
+        tip.rotation.y = angle;
+        group.add(tip);
+      }
+
+      // Center bullet
+      const centerBullet = new THREE.Mesh(bulletGeo, ammoMat);
+      centerBullet.position.y = 0.1;
+      centerBullet.rotation.z = Math.PI / 2;
+      group.add(centerBullet);
+      const centerTip = new THREE.Mesh(bulletTipGeo, ammoMat);
+      centerTip.position.set(-0.18, 0.1, 0);
+      centerTip.rotation.z = Math.PI / 2;
+      group.add(centerTip);
+
+      // Glow ring on base
+      const ringGeo = new THREE.TorusGeometry(0.25, 0.015, 8, 16);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.5 });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = -0.07;
+      group.add(ring);
+
+      scene.add(group);
+      game.ammoPickups.push({ mesh: group, life: 30.0, ammoAmount: 15 }); // 30 second lifetime
+    };
+
     const awardKillAmmo = () => {
       const isLauncher = game.activeWeapon.type === 'LAUNCHER';
       const ammoAward = isLauncher ? 1 : 5;
@@ -2469,6 +2546,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (isHeadshot) game.playerHeadshots = (game.playerHeadshots || 0) + 1;
         game.playerWeaponKills[game.activeWeapon.id] = (game.playerWeaponKills[game.activeWeapon.id] || 0) + 1;
         awardKillAmmo();
+        spawnAmmoPickup(bot.position.clone());
         game.playerScore += isHeadshot ? 150 : 100;
         sounds.playKill();
         const isSniper = game.activeWeapon.type === 'sniper';
@@ -2913,6 +2991,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 game.playerKills++;
                 game.playerWeaponKills[game.activeWeapon.id] = (game.playerWeaponKills[game.activeWeapon.id] || 0) + 1;
                 awardKillAmmo();
+                spawnAmmoPickup(b.position.clone());
                 game.playerScore += 100;
                 onKillFeedUpdate({
                   id: `feed_${performance.now()}`,
@@ -3400,6 +3479,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (game.keys['shift']) moveSpeed *= 1.35; // Sprinting
         if (game.isADS) moveSpeed *= 0.55; // ADS slowing
         moveSpeed *= playerClass.speed; // Class bonus speed
+
+        // Bunny hop speed boost: add on top of sprint, caps at 1.2x total multiplier
+        // This means if sprint is 1.35x and bunny hop is 0.2x, total max is 1.2x (not 1.55x)
+        // bunnyHopBoost ranges from 0.0 to 0.2
+        if (game.bunnyHopBoost > 0.001) {
+          const bunnyMultiplier = 1.0 + game.bunnyHopBoost;
+          // If sprinting, the total multiplier is 1.35 * bunnyMultiplier, cap at 1.2
+          // If not sprinting, total is 1.0 * bunnyMultiplier, cap at 1.2
+          const currentMult = game.keys['shift'] ? 1.35 * bunnyMultiplier : bunnyMultiplier;
+          const cappedMult = Math.min(currentMult, 1.2);
+          if (game.keys['shift']) {
+            moveSpeed = moveSpeed / 1.35 * cappedMult; // Replace sprint mult with capped
+          } else {
+            moveSpeed *= cappedMult;
+          }
+        }
+
         if (hacksRef.current.speedHack) moveSpeed *= 2.5; // Speed Hack
         if (hacksRef.current.insaneSpeed) moveSpeed *= 10.0; // Insane Speed Hack
 
@@ -3551,9 +3647,64 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           isOnGround = true;
         }
 
+        // Bunny hop tracking
+        const isMoving = moveDir.lengthSq() > 0.1;
+        if (isOnGround) {
+          if (!game.wasOnGround) {
+            // Just landed
+            if (isMoving) {
+              // Successful bunny hop — increase boost
+              game.bunnyHopConsecutiveJumps++;
+              // Build up speed: each consecutive hop adds more, up to 0.2 (1.2x)
+              game.bunnyHopBoost = Math.min(game.bunnyHopBoost + 0.04, 0.2);
+            } else {
+              // Stopped moving — reset bunny hop chain
+              game.bunnyHopConsecutiveJumps = 0;
+              game.bunnyHopBoost = 0;
+            }
+          } else {
+            // Still on ground — slowly decay boost if not jumping
+            game.bunnyHopBoost = Math.max(0, game.bunnyHopBoost - 0.3 * delta);
+            if (!isMoving) {
+              game.bunnyHopConsecutiveJumps = 0;
+              game.bunnyHopBoost = Math.max(0, game.bunnyHopBoost - 1.0 * delta);
+            }
+          }
+          game.wasOnGround = true;
+        } else {
+          // In the air
+          game.wasOnGround = false;
+          // Decay boost slowly while airborne
+          game.bunnyHopBoost = Math.max(0, game.bunnyHopBoost - 0.05 * delta);
+        }
+
         // Jump trigger
         if (game.keys[keyJump] && isOnGround) {
           game.playerVel.y = hacksRef.current.superJump ? 25.0 : 9.5; // Jump strength
+        }
+
+        // Weapon knockback: heavy pumps and RPG-7 push you opposite to shooting direction
+        // This is applied after jump so it affects airborne movement
+        {
+          const weaponId = game.activeWeapon.id;
+          let knockbackForce = 0;
+          if (weaponId === 'rpg7_rocket') {
+            knockbackForce = 12.0; // RPG knocks you back significantly
+          } else if (weaponId === 'hs0405_shotgun' || weaponId === 'krm_shotgun' || weaponId === 'by15_shotgun') {
+            knockbackForce = 4.5; // Heavy pumps knock you back moderately
+          }
+          if (knockbackForce > 0 && game._lastShotKnockback > 0) {
+            // Apply knockback opposite to where camera is facing (where you're shooting)
+            const shootDir = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), game.yaw);
+            game.playerVel.x -= shootDir.x * knockbackForce * game._lastShotKnockback;
+            game.playerVel.z -= shootDir.z * knockbackForce * game._lastShotKnockback;
+            // Also slight upward kick for RPG
+            if (weaponId === 'rpg7_rocket' && isOnGround) {
+              game.playerVel.y += 3.0 * game._lastShotKnockback;
+            }
+          }
+          // Decay knockback impulse
+          game._lastShotKnockback = Math.max(0, (game._lastShotKnockback || 0) - delta * 8);
         }
 
         // Anti-stuck clipping disabled for player to prevent stutter, sweep tests handle walls
@@ -4053,6 +4204,70 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (bot.torsoMesh) bot.torsoMesh.rotation.x = -0.25 * (bot.flinchTimer / 0.15);
         } else if (bot.torsoMesh) {
           bot.torsoMesh.rotation.x = 0;
+        }
+      }
+
+      // Ammo Pickup Updates: spin, pickup detection, lifetime
+      for (let i = game.ammoPickups.length - 1; i >= 0; i--) {
+        const pickup = game.ammoPickups[i];
+        pickup.life -= delta;
+
+        // Remove expired pickups
+        if (pickup.life <= 0) {
+          scene.remove(pickup.mesh);
+          pickup.mesh.traverse(child => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose();
+              (child.material as THREE.Material).dispose();
+            }
+          });
+          game.ammoPickups.splice(i, 1);
+          continue;
+        }
+
+        // Spin the ammo bundle
+        pickup.mesh.rotation.y += delta * 3.0;
+
+        // Gentle hover bob
+        pickup.mesh.position.y = 0.25 + Math.sin(time * 0.003 + i) * 0.06;
+
+        // Fade out in last 3 seconds
+        if (pickup.life < 3) {
+          const fade = pickup.life / 3;
+          pickup.mesh.traverse(child => {
+            if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial) {
+              child.material.opacity = fade * 0.5;
+            }
+          });
+        }
+
+        // Pickup detection: if player is within 1.5 units
+        const distToPlayer = game.playerPos.distanceTo(pickup.mesh.position);
+        if (distToPlayer < 1.5) {
+          // Refill reserve ammo for BOTH weapons (not clip)
+          const primaryMax = playerClass.primaryWeapon.maxAmmo * 3;
+          const secondaryMax = playerClass.secondaryWeapon.maxAmmo * 3;
+          game.primaryAmmo.reserve = Math.min(game.primaryAmmo.reserve + pickup.ammoAmount, primaryMax);
+          game.secondaryAmmo.reserve = Math.min(game.secondaryAmmo.reserve + pickup.ammoAmount, secondaryMax);
+          if (game.isPrimary) {
+            game.playerReserve = game.primaryAmmo.reserve;
+          } else {
+            game.playerReserve = game.secondaryAmmo.reserve;
+          }
+          onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
+
+          // Pickup feedback particles
+          spawnParticles(pickup.mesh.position.clone().setY(0.5), '#fbbf24', 12);
+
+          // Remove pickup
+          scene.remove(pickup.mesh);
+          pickup.mesh.traverse(child => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose();
+              (child.material as THREE.Material).dispose();
+            }
+          });
+          game.ammoPickups.splice(i, 1);
         }
       }
 
