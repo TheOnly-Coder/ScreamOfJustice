@@ -2843,6 +2843,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }, 1000);
 
     const endMatch = () => {
+      if (config.isCampaign) return; // Campaign missions never auto-end
       clearInterval(timerInterval);
       if (game.frameId) cancelAnimationFrame(game.frameId);
 
