@@ -93,6 +93,7 @@ export interface MatchStats {
   headshots?: number;
   timePlayedSeconds?: number;
   weaponKills?: Record<string, number>;
+  teamId?: number;
 }
 
 export interface KillFeedEntry {
@@ -110,15 +111,19 @@ export interface XpEvent {
   reason: string;
 }
 
+export type GameMode = 'FFA' | 'TEAMS_2v2' | 'TEAMS_4v4' | 'TEAMS_2v2v2';
+
 export interface MatchConfig {
-  mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown';
+  mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo';
   timeLimit: number; // in seconds
-  scoreLimit: number; // kills to win
+  scoreLimit: number; // kills to win (FFA) or team score limit (Teams)
   botCount: number;
   difficulty: 'EASY' | 'MEDIUM' | 'HARD';
   isMultiplayer?: boolean;
   roomCode?: string;
   spectatorMode?: boolean;
+  gameMode?: GameMode;
+  playerTeamId?: number;
 }
 
 export interface TouchBindings {
@@ -929,32 +934,71 @@ export const CLASSES: CharacterClass[] = [
   }
 ];
 
+export const TEAM_COLORS = ['#3b82f6', '#ef4444', '#f59e0b'] as const;
+export const TEAM_NAMES = ['BLUE FORCE', 'RED FORCE', 'GOLD FORCE'] as const;
+
+export const GAME_MODES: { id: GameMode; label: string; desc: string }[] = [
+  { id: 'FFA', label: 'Free For All', desc: 'Every player for themselves. Classic deathmatch.' },
+  { id: 'TEAMS_2v2', label: '2v2 Teams', desc: '2 teams of 2 — you + 1 bot ally vs 2 enemies.' },
+  { id: 'TEAMS_4v4', label: '4v4 Teams', desc: '2 teams of 4 — large-scale squad warfare.' },
+  { id: 'TEAMS_2v2v2', label: '2v2v2 MGC', desc: '3 teams of 2 — chaotic multi-team combat.' },
+];
+
+export const getTeamConfig = (mode: GameMode) => {
+  switch (mode) {
+    case 'TEAMS_2v2': return { teamCount: 2, perTeam: 2, totalBots: 3 };
+    case 'TEAMS_4v4': return { teamCount: 2, perTeam: 4, totalBots: 7 };
+    case 'TEAMS_2v2v2': return { teamCount: 3, perTeam: 2, totalBots: 5 };
+    default: return { teamCount: 0, perTeam: 0, totalBots: 0 };
+  }
+};
+
+export const isTeamMode = (mode?: GameMode) => mode && mode !== 'FFA';
+
 export const MAPS = [
   {
     id: 'nuketown',
     name: 'Nuketown 2025',
     description: 'Iconic suburban nuclear test site featuring yellow/green 2-story houses, school bus, delivery truck, cul-de-sac, and backyard fences.',
     color: '#f59e0b',
+    teamsOnly: false,
   },
   {
     id: 'shipment',
     name: 'Sector-4 Shipment',
     description: 'A tight, chaotic dockyard filled with shipping containers. Expect immediate action and non-stop skirmishes.',
     color: '#3f3f46',
+    teamsOnly: false,
   },
   {
     id: 'rust',
     name: 'Dust Rustlands',
     description: 'An abandoned industrial desert outpost with vertical towers and pipe walkways. High tactical elevation.',
     color: '#d97706',
+    teamsOnly: false,
   },
   {
     id: 'dust2',
     name: 'Desert Compound',
     description: 'A classic tactical layout with standard corridors, a central square, and long sniping lanes.',
     color: '#ca8a04',
+    teamsOnly: false,
+  },
+  {
+    id: 'teams_combo',
+    name: 'Sector-9 Supersite',
+    description: 'Massive combined-ops arena merging Nuketown streets with Shipment container yards, plus unique watchtowers, underground tunnels, and a central command building. Built for team warfare.',
+    color: '#6366f1',
+    teamsOnly: true,
   }
 ];
+
+export const GAME_MODE_MAPS: Record<GameMode, string[]> = {
+  'FFA': ['nuketown', 'shipment', 'rust', 'dust2'],
+  'TEAMS_2v2': ['teams_combo', 'nuketown', 'shipment', 'rust', 'dust2'],
+  'TEAMS_4v4': ['teams_combo', 'nuketown', 'rust', 'dust2'],
+  'TEAMS_2v2v2': ['teams_combo', 'nuketown', 'rust', 'dust2'],
+};
 
 export const BOT_NAMES = [
   'Soap_MacTavish',

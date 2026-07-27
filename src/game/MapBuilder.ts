@@ -16,7 +16,7 @@ export interface MapData {
   fogDensity: number;
 }
 
-export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown'): MapData {
+export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo'): MapData {
   const colliders: CollidableBox[] = [];
   const spawnPoints: THREE.Vector3[] = [];
 
@@ -492,6 +492,293 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
       new THREE.Vector3(-12, 1.5, -12),  // Mid NW Cover
       new THREE.Vector3(12, 1.5, 12),    // Mid SE Cover
       new THREE.Vector3(-30, 1.5, 0)     // West Dune Spawn
+    );
+
+  } else if (mapId === 'teams_combo') {
+    ambientColor = '#c4b5fd'; // Violet dusk
+    directionalColor = '#e2e8f0';
+    fogColor = '#1e1b4b'; // Deep indigo fog
+    fogDensity = 0.005;
+
+    const FLOOR_W = 260;
+    const FLOOR_D = 220;
+
+    // === MASSIVE COMBINED FLOOR ===
+    // Nuketown zone (left half, z = -40..60)
+    const nukeFloor = new THREE.PlaneGeometry(140, 120);
+    const nukeRoadTex = createConcreteTexture(0x334155, 1.0, 18);
+    nukeRoadTex.repeat.set(18, 15);
+    const nukeFloorMat = new THREE.MeshStandardMaterial({ map: nukeRoadTex, color: 0x334155, roughness: 0.85 });
+    const nukeFloorMesh = new THREE.Mesh(nukeFloor, nukeFloorMat);
+    nukeFloorMesh.rotation.x = -Math.PI / 2;
+    nukeFloorMesh.position.set(-55, 0, 10);
+    nukeFloorMesh.receiveShadow = true;
+    scene.add(nukeFloorMesh);
+
+    // Nuketown grass yards
+    const grassGeo = new THREE.PlaneGeometry(40, 100);
+    const grassTex = createGrassTexture(0x15803d);
+    grassTex.repeat.set(8, 16);
+    const grassMat = new THREE.MeshStandardMaterial({ map: grassTex, color: 0x15803d, roughness: 0.9 });
+    const yardW = new THREE.Mesh(grassGeo, grassMat);
+    yardW.position.set(-95, 0.05, 10);
+    yardW.rotation.x = -Math.PI / 2;
+    yardW.receiveShadow = true;
+    scene.add(yardW);
+    const yardE = new THREE.Mesh(grassGeo, grassMat);
+    yardE.position.set(-15, 0.05, 10);
+    yardE.rotation.x = -Math.PI / 2;
+    yardE.receiveShadow = true;
+    scene.add(yardE);
+
+    // Shipment zone (right half, z = -40..40)
+    const shipFloorGeo = new THREE.PlaneGeometry(90, 90);
+    const shipFloorTex = createConcreteTexture(0x1e293b, 1.0, 20);
+    shipFloorTex.repeat.set(22, 22);
+    const shipFloorMat = new THREE.MeshStandardMaterial({ map: shipFloorTex, color: 0x1e293b, roughness: 0.9 });
+    const shipFloorMesh = new THREE.Mesh(shipFloorGeo, shipFloorMat);
+    shipFloorMesh.rotation.x = -Math.PI / 2;
+    shipFloorMesh.position.set(65, 0, 0);
+    shipFloorMesh.receiveShadow = true;
+    scene.add(shipFloorMesh);
+
+    // Central connecting plaza (between the two zones)
+    const plazaGeo = new THREE.PlaneGeometry(50, 50);
+    const plazaTex = createSandTexture(0x78716c);
+    plazaTex.repeat.set(12, 12);
+    const plazaMat = new THREE.MeshStandardMaterial({ map: plazaTex, color: 0x78716c, roughness: 0.85 });
+    const plazaMesh = new THREE.Mesh(plazaGeo, plazaMat);
+    plazaMesh.rotation.x = -Math.PI / 2;
+    plazaMesh.position.set(10, 0.03, 10);
+    plazaMesh.receiveShadow = true;
+    scene.add(plazaMesh);
+
+    // === PERIMETER WALLS ===
+    const wallH = 12;
+    createCrate([0, wallH / 2, -115], [FLOOR_W, wallH, 2], 0x1e1b4b, 0, 'wall'); // N
+    createCrate([0, wallH / 2, 105], [FLOOR_W, wallH, 2], 0x1e1b4b, 0, 'wall');  // S
+    createCrate([-128, wallH / 2, 0], [2, wallH, FLOOR_D], 0x1e1b4b, 0, 'wall'); // W
+    createCrate([128, wallH / 2, 0], [2, wallH, FLOOR_D], 0x1e1b4b, 0, 'wall');  // E
+
+    // === NUKETOWN ZONE (left half) ===
+    // Green House (mirrored from original)
+    const buildComboHouse = (x: number, z: number, color1: number, color2: number, sign: number) => {
+      const w = 22, h = 8, d = 28, t = 1.5;
+      createCrate([x + sign * (w/2), h/2, z], [t, h, d], color1);
+      createCrate([x - sign * (w/2), h/2, z + 9], [t, h, 10], color1);
+      createCrate([x - sign * (w/2), h/2, z - 10], [t, h, 8], color1);
+      createCrate([x - sign * (w/2), h - 1.5, z], [t, 3, d], color1);
+      createCrate([x, h/2, z + d/2], [w, h, t], color1);
+      createCrate([x, h/2, z - d/2], [w, h, t], color1);
+      // 2nd floor
+      createCrate([x, h + 0.5, z + 9], [w, 1, 10], color2);
+      createCrate([x, h + 0.5, z - 9], [w, 1, 10], color2);
+      // Roof
+      createCrate([x, h + 7.5, z], [w + 2, 1, d + 2], 0x334155);
+      // Stairs
+      const numSteps = 16;
+      const stepHeight = (h + 1) / numSteps;
+      const stepDepth = 10 / numSteps;
+      for (let i = 0; i < numSteps; i++) {
+        const stepX = (x + sign * 5) - (sign * (i * stepDepth));
+        const stepY = i * stepHeight + (stepHeight / 2);
+        createCrate([stepX, stepY, z], [stepDepth, stepHeight, 8], 0x475569);
+      }
+      // Garage
+      createCrate([x, 3, z - 20], [18, 6, 12], color1);
+    };
+
+    // Position args: x, z, color1, color2, sign (which side door is on)
+    buildComboHouse(-75, 10, 0x166534, 0x15803d, -1);
+    buildComboHouse(-35, 10, 0xca8a04, 0xeab308, 1);
+
+    // Vehicles
+    createCrate([-61, 3.5, 2], [7, 6, 22], 0xef4444, 0.15);
+    createCrate([-47, 4, 22], [8, 7, 24], 0xf8fafc, -0.1);
+    createCrate([-47, 3, 36], [7, 5, 6], 0x0284c7, -0.1);
+
+    // Billboard
+    createCrate([-55, 12, -32], [24, 8, 1.5], 0xf59e0b);
+    createCrate([-65, 4, -32], [1.5, 8, 1.5], 0x334155);
+    createCrate([-45, 4, -32], [1.5, 8, 1.5], 0x334155);
+
+    // Cars & Sandbags
+    createCrate([-77, 1.5, 35], [5, 3, 10], 0x2563eb, 0.2);
+    createCrate([-33, 1.5, -15], [5, 3, 10], 0xdc2626, -0.2);
+    createCrate([-55, 1.5, 10], [6, 3, 2], 0xb45309);
+
+    // === SHIPMENT ZONE (right half) ===
+    // Center cross containers
+    createOpenContainer([65, 3, 0], [6, 6, 18], 0x2563eb, 0);
+    createOpenContainer([65, 3, 0], [6, 6, 18], 0xd97706, Math.PI / 2);
+    createCrate([65, 9, 0], [6, 6, 16], 0xdc2626, 0.1);
+
+    // Corner clusters
+    createOpenContainer([45, 3, -20], [6, 6, 16], 0x16a34a, Math.PI / 4);
+    createCrate([43, 9, -20], [6, 6, 14], 0x4f46e5, Math.PI / 4 + 0.1);
+    createCrate([33, 3, -32], [10, 6, 10], 0x475569);
+
+    createOpenContainer([85, 3, -20], [6, 6, 16], 0x2563eb, -Math.PI / 4);
+    createCrate([87, 9, -20], [6, 6, 14], 0xd97706, -Math.PI / 4 - 0.1);
+    createCrate([97, 3, -32], [10, 6, 10], 0x475569);
+
+    createOpenContainer([45, 3, 20], [6, 6, 16], 0xd97706, -Math.PI / 4);
+    createCrate([43, 9, 20], [6, 6, 14], 0x16a34a, -Math.PI / 4 + 0.1);
+    createCrate([33, 3, 32], [10, 6, 10], 0x475569);
+
+    createOpenContainer([85, 3, 20], [6, 6, 16], 0xdc2626, Math.PI / 4);
+    createCrate([87, 9, 20], [6, 6, 14], 0x2563eb, Math.PI / 4 - 0.1);
+    createCrate([97, 3, 32], [10, 6, 10], 0x475569);
+
+    // Cover crates & sandbags
+    createCrate([53, 1.5, 12], [3, 3, 3], 0x78350f);
+    createCrate([53, 4.5, 12], [2.5, 2.5, 2.5], 0xb45309);
+    createCrate([77, 1.5, -12], [3, 3, 3], 0x78350f);
+    createCrate([77, 4.5, -12], [2.5, 2.5, 2.5], 0xb45309);
+    createCrate([65, 1.2, -26], [10, 2.4, 2], 0xb45309);
+    createCrate([65, 1.2, 26], [10, 2.4, 2], 0xb45309);
+    createCrate([39, 1.2, 0], [2, 2.4, 10], 0xb45309);
+    createCrate([91, 1.2, 0], [2, 2.4, 10], 0xb45309);
+    createCrate([51, 2, -5], [4, 4, 6], 0xf59e0b, 0.2);
+    createCrate([79, 2, 5], [4, 4, 6], 0xf59e0b, -0.2);
+
+    // === CENTRAL CONNECTING PLAZA (unique buildings) ===
+    // Central Command Building (large 2-story HQ)
+    const hqX = 10, hqZ = 10;
+    createCrate([hqX - 10, 5, hqZ], [2, 10, 24], 0x475569);
+    createCrate([hqX + 10, 5, hqZ], [2, 10, 24], 0x475569);
+    createCrate([hqX, 5, hqZ - 12], [22, 10, 2], 0x475569);
+    createCrate([hqX, 5, hqZ + 12], [22, 10, 2], 0x475569);
+    createCrate([hqX, 10.5, hqZ], [22, 1, 24], 0x6366f1);
+    // HQ entrance gap (south wall)
+    createCrate([hqX - 6, 5, hqZ + 12], [10, 10, 2], 0x475569);
+    createCrate([hqX + 6, 5, hqZ + 12], [10, 10, 2], 0x475569);
+
+    // Two Watchtowers flanking the plaza
+    const buildWatchtower = (wx: number, wz: number) => {
+    createCrate([wx, 4, wz], [4, 8, 4], 0x475569);
+    createCrate([wx, 8.5, wz], [6, 1, 6], 0x854d0e);
+    // Ladder ramp
+    for (let i = 0; i < 8; i++) {
+      createCrate([wx + 2.5, i + 0.5, wz], [0.5, 1, 3], 0x78350f);
+    }
+    // Railing
+    createCrate([wx - 3.2, 9.5, wz], [0.3, 1.5, 6], 0x451a03);
+    createCrate([wx + 3.2, 9.5, wz], [0.3, 1.5, 6], 0x451a03);
+    createCrate([wx, 9.5, wz - 3.2], [6, 1.5, 0.3], 0x451a03);
+    createCrate([wx, 9.5, wz + 3.2], [6, 1.5, 0.3], 0x451a03);
+    };
+    buildWatchtower(-20, -25);
+    buildWatchtower(40, -25);
+
+    // === UNDERGROUND TUNNEL SYSTEM (covered trenches) ===
+    // North-South trench
+    createCrate([10, -1, -50], [8, 3, 60], 0x374151);
+    createCrate([10, 1.5, -50], [10, 1, 60], 0x374151);
+    // East-West trench
+    createCrate([-30, -1, -50], [60, 3, 8], 0x374151);
+    createCrate([-30, 1.5, -50], [60, 1, 10], 0x374151);
+
+    // === ADDITIONAL UNIQUE BUILDINGS ===
+    // Radio Tower (tall, at north)
+    createCrate([10, 6, -80], [3, 12, 3], 0x7c2d12);
+    createCrate([10, 13, -80], [8, 1, 8], 0x475569);
+    // Guy wires (diagonal beams)
+    createCrate([10, 10, -75], [1, 1, 10], 0x78350f, 0.3);
+    createCrate([10, 10, -85], [1, 1, 10], 0x78350f, -0.3);
+
+    // Bunker complex (south area)
+    createCrate([-30, 2.5, 70], [16, 5, 12], 0x451a03);
+    createCrate([-30, 5.5, 70], [18, 1, 14], 0x374151);
+    createCrate([30, 2.5, 70], [16, 5, 12], 0x451a03);
+    createCrate([30, 5.5, 70], [18, 1, 14], 0x374151);
+    // Bunker connecting wall
+    createCrate([0, 2.5, 70], [16, 5, 2], 0x451a03);
+
+    // Guard towers at south corners
+    createCrate([-80, 5, 80], [6, 10, 6], 0x475569);
+    createCrate([80, 5, 80], [6, 10, 6], 0x475569);
+
+    // Oil Pipeline (connects zones)
+    const pipeMat2 = new THREE.MeshStandardMaterial({ color: 0x4b5563, metalness: 0.6, roughness: 0.4 });
+    const pipeGeo2 = new THREE.CylinderGeometry(2, 2, 60, 8);
+    const pipeMain = new THREE.Mesh(pipeGeo2, pipeMat2);
+    pipeMain.position.set(-10, 2, -60);
+    pipeMain.rotation.z = Math.PI / 2;
+    pipeMain.castShadow = true;
+    scene.add(pipeMain);
+    pipeMain.updateMatrixWorld(true);
+    colliders.push({ box: new THREE.Box3().setFromObject(pipeMain), mesh: pipeMain as any, type: 'crate' });
+
+    // Fuel Silo near Shipment
+    const siloGeo2 = new THREE.CylinderGeometry(5, 5, 16, 12);
+    const silo2 = new THREE.Mesh(siloGeo2, pipeMat2);
+    silo2.position.set(110, 8, -40);
+    silo2.castShadow = true;
+    silo2.receiveShadow = true;
+    scene.add(silo2);
+    silo2.updateMatrixWorld(true);
+    colliders.push({ box: new THREE.Box3().setFromObject(silo2), mesh: silo2 as any, type: 'crate' });
+
+    // Supply depot (west side)
+    createCrate([-110, 2.5, 40], [14, 5, 10], 0x78350f);
+    createCrate([-110, 5.5, 40], [16, 1, 12], 0x374151);
+    createCrate([-110, 2.5, 55], [10, 5, 10], 0x78350f);
+    createCrate([-110, 5.5, 55], [12, 1, 12], 0x374151);
+
+    // Scattered cover between zones
+    createCrate([-20, 1.5, 40], [4, 3, 4], 0xb45309);
+    createCrate([-10, 1.5, 45], [4, 3, 4], 0xb45309);
+    createCrate([20, 1.5, 35], [6, 3, 2], 0x475569);
+    createCrate([30, 1.5, -40], [6, 3, 2], 0x475569);
+    createCrate([40, 1.5, 45], [3, 3, 3], 0x78350f);
+    createCrate([-25, 1.5, -40], [3, 3, 3], 0x78350f);
+
+    // 30+ Spawn Points across the massive map
+    spawnPoints.push(
+      // Nuketown zone spawns
+      new THREE.Vector3(-62, 8, 10),    // Green Balcony
+      new THREE.Vector3(-22, 8, 10),    // Yellow Balcony
+      new THREE.Vector3(-80, 1.5, 45),   // Green Backyard
+      new THREE.Vector3(-30, 1.5, 45),   // Yellow Backyard
+      new THREE.Vector3(-75, 1.5, -12),  // Green Garage
+      new THREE.Vector3(-35, 1.5, -12),  // Yellow Garage
+      new THREE.Vector3(-50, 1.5, -25),  // Billboard West
+      new THREE.Vector3(-60, 1.5, 30),   // Bus Flank
+      new THREE.Vector3(-40, 1.5, 25),   // Truck Flank
+
+      // Shipment zone spawns
+      new THREE.Vector3(37, 1.5, -28),    // NW Corner
+      new THREE.Vector3(93, 1.5, -28),    // NE Corner
+      new THREE.Vector3(37, 1.5, 28),     // SW Corner
+      new THREE.Vector3(93, 1.5, 28),     // SE Corner
+      new THREE.Vector3(65, 1.5, -32),    // North Alley
+      new THREE.Vector3(65, 1.5, 32),     // South Alley
+      new THREE.Vector3(33, 1.5, 0),      // West Alley
+      new THREE.Vector3(97, 1.5, 0),      // East Alley
+      new THREE.Vector3(65, 1.5, -8),     // Inside N Container
+      new THREE.Vector3(65, 1.5, 8),      // Inside S Container
+
+      // Central plaza spawns
+      new THREE.Vector3(10, 1.5, 0),      // HQ entrance
+      new THREE.Vector3(10, 1.5, 25),     // HQ south
+      new THREE.Vector3(-20, 9, -25),    // West Watchtower
+      new THREE.Vector3(40, 9, -25),     // East Watchtower
+      new THREE.Vector3(-5, 1.5, 10),     // Plaza west
+      new THREE.Vector3(25, 1.5, 10),     // Plaza east
+
+      // Unique building spawns
+      new THREE.Vector3(10, 13, -80),     // Radio tower top
+      new THREE.Vector3(10, 1.5, -65),    // Radio tower base
+      new THREE.Vector3(-30, 3, 70),     // West bunker
+      new THREE.Vector3(30, 3, 70),      // East bunker
+      new THREE.Vector3(-80, 6, 80),     // SW guard tower
+      new THREE.Vector3(80, 6, 80),      // SE guard tower
+      new THREE.Vector3(-110, 3.5, 40),   // Supply depot
+      new THREE.Vector3(110, 1.5, -40),   // Silo area
+      new THREE.Vector3(10, 1.5, -50),    // Trench intersection
+      new THREE.Vector3(-30, 1.5, -50),   // West trench
+      new THREE.Vector3(-25, 1.5, -80)    // North flank
     );
 
   } else {

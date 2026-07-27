@@ -1,17 +1,25 @@
 import React from 'react';
-import { MatchStats, CLASSES } from '../types';
-import { Trophy, RotateCcw, Swords, Medal, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { MatchStats, CLASSES, TEAM_COLORS, TEAM_NAMES, isTeamMode } from '../types';
+import { Trophy, RotateCcw, Swords, Medal, AlertTriangle, ShieldCheck, Users } from 'lucide-react';
 
 interface ScoreboardScreenProps {
   stats: MatchStats[];
   onRestart: () => void;
   playerName: string;
+  gameMode?: string;
+  teamScores?: number[];
+  playerTeamId?: number;
 }
 
-export const ScoreboardScreen: React.FC<ScoreboardScreenProps> = ({ stats, onRestart, playerName }) => {
+export const ScoreboardScreen: React.FC<ScoreboardScreenProps> = ({ stats, onRestart, playerName, gameMode, teamScores, playerTeamId }) => {
   // Check if player won
   const winner = stats[0];
-  const isPlayerWinner = winner?.id === 'player';
+  const teamMode = isTeamMode(gameMode as any);
+  const isPlayerWinner = teamMode
+    ? (teamScores && playerTeamId !== undefined
+        ? teamScores[playerTeamId] === Math.max(...(teamScores || [0]))
+        : false)
+    : winner?.id === 'player';
 
   return (
     <div id="scoreboard-screen-root" className="min-h-screen bg-slate-950 text-white flex flex-col justify-center items-center font-sans p-6 select-none overflow-y-auto">
@@ -37,8 +45,8 @@ export const ScoreboardScreen: React.FC<ScoreboardScreenProps> = ({ stats, onRes
           </h1>
           <p className="text-sm text-slate-400 font-mono">
             {isPlayerWinner 
-              ? `Congratulations Soldier! You dominated the arena with ${winner.kills} kills!` 
-              : `Combat match concluded. ${winner?.name || 'A bot'} claimed victory with ${winner?.kills || 0} kills.`
+              ? `Congratulations Soldier! Your team dominated with ${teamScores ? teamScores[playerTeamId || 0] : 0} kills!` 
+              : `Combat match concluded. ${teamMode ? (teamScores ? `Winning team: ${TEAM_NAMES[teamScores.indexOf(Math.max(...(teamScores || [0])))] || 'Unknown'}` : 'Team match') : `${winner?.name || 'A bot'} claimed victory with ${winner?.kills || 0} kills.`}`
             }
           </p>
         </div>
@@ -49,6 +57,29 @@ export const ScoreboardScreen: React.FC<ScoreboardScreenProps> = ({ stats, onRes
         <h2 className="text-xs font-mono text-slate-400 uppercase tracking-widest font-bold">
           Match Statistics Leaderboard
         </h2>
+
+        {/* Team Scores Banner */}
+        {teamMode && teamScores && (
+          <div className="flex gap-3">
+            {teamScores.map((score, t) => (
+              <div
+                key={t}
+                className="flex-1 p-3 rounded-xl border text-center"
+                style={{
+                  borderColor: TEAM_COLORS[t] + '60',
+                  backgroundColor: TEAM_COLORS[t] + '10'
+                }}
+              >
+                <div className="text-[9px] font-mono font-bold" style={{ color: TEAM_COLORS[t] }}>
+                  {TEAM_NAMES[t]}
+                </div>
+                <div className="text-2xl font-extrabold mt-1" style={{ color: TEAM_COLORS[t] }}>
+                  {score}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -89,6 +120,9 @@ export const ScoreboardScreen: React.FC<ScoreboardScreenProps> = ({ stats, onRes
                       </div>
                     </td>
                     <td className="py-3.5 font-sans font-extrabold flex items-center gap-2">
+                      {teamMode && item.teamId !== undefined && (
+                        <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: TEAM_COLORS[item.teamId] || '#666' }} />
+                      )}
                       <span className="truncate max-w-[150px]">{item.name}</span>
                       {isLocalPlayer && (
                         <span className="bg-emerald-500/20 text-emerald-400 text-[8px] font-mono px-1.5 py-0.5 rounded uppercase font-extrabold tracking-wider">

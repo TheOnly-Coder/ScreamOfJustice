@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CLASSES, MAPS, BOT_NAMES, WEAPONS, CharacterClass, MatchConfig, LobbyPlayer, KeyBindings, TouchBindings, GraphicsQuality } from '../types';
+import { CLASSES, MAPS, BOT_NAMES, WEAPONS, CharacterClass, MatchConfig, LobbyPlayer, KeyBindings, TouchBindings, GraphicsQuality, GameMode, GAME_MODES, GAME_MODE_MAPS, TEAM_NAMES, TEAM_COLORS, getTeamConfig, isTeamMode } from '../types';
 import { Shield, Target, Users, Settings, Flame, Play, Volume2, VolumeX, Swords, Award, Smartphone, Globe } from 'lucide-react';
 import { sounds } from '../lib/sounds';
 import { KeybindingsEditor } from './KeybindingsEditor';
@@ -45,7 +45,8 @@ export const Lobby: React.FC<LobbyProps> = ({
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedPrimaryId, setSelectedPrimaryId] = useState('m4_assault');
   const [selectedSecondaryId, setSelectedSecondaryId] = useState('mw11_pistol');
-  const [selectedMapId, setSelectedMapId] = useState<'shipment' | 'rust' | 'dust2' | 'nuketown'>('nuketown');
+  const [selectedMapId, setSelectedMapId] = useState<'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo'>('nuketown');
+  const [gameMode, setGameMode] = useState<GameMode>('FFA');
   const [botCount, setBotCount] = useState(5);
   const [difficulty, setDifficulty] = useState<'EASY' | 'MEDIUM' | 'HARD'>('MEDIUM');
   const [scoreLimit, setScoreLimit] = useState(20);
@@ -145,8 +146,19 @@ export const Lobby: React.FC<LobbyProps> = ({
   // Pre-game lobby roster simulation
   const [lobbyPlayers, setLobbyPlayers] = useState<LobbyPlayer[]>([]);
 
+  // When game mode changes, ensure selected map is valid for this mode
+  useEffect(() => {
+    const validMaps = GAME_MODE_MAPS[gameMode];
+    if (!validMaps.includes(selectedMapId as any)) {
+      setSelectedMapId(validMaps[0] as any);
+    }
+  }, [gameMode]);
+
   const selectedClass = CLASSES.find(c => c.id === selectedClassId) || CLASSES[0];
   const activeMap = MAPS.find(m => m.id === selectedMapId) || MAPS[0];
+  const availableMapsForMode = GAME_MODE_MAPS[gameMode];
+  const teamModeActive = isTeamMode(gameMode);
+  const teamCfg = teamModeActive ? getTeamConfig(gameMode) : null;
 
   // Regulate sound checks
   useEffect(() => {
@@ -163,13 +175,14 @@ export const Lobby: React.FC<LobbyProps> = ({
         classId: selectedClassId,
         isReady: true,
         ping: 0,
-        rank: 55, // Max classic prestige!
+        rank: 55,
         avatarSeed: 'you'
       }
     ];
 
-    // Populate with bots up to botCount
-    for (let i = 0; i < botCount; i++) {
+    // Populate with bots up to botCount (FFA) or team bot count
+    const totalBots = teamModeActive && teamCfg ? teamCfg.totalBots : botCount;
+    for (let i = 0; i < totalBots; i++) {
       const botName = BOT_NAMES[i % BOT_NAMES.length];
       const botClass = CLASSES[Math.floor((i + 2) % CLASSES.length)];
       list.push({
@@ -185,7 +198,7 @@ export const Lobby: React.FC<LobbyProps> = ({
     }
 
     setLobbyPlayers(list);
-  }, [playerName, selectedClassId, botCount]);
+  }, [playerName, selectedClassId, botCount, gameMode]);
 
   const handleConnectPrivateRoom = async (inputCode?: string) => {
     sounds.playKill();
@@ -289,10 +302,12 @@ export const Lobby: React.FC<LobbyProps> = ({
         mapId: selectedMapId,
         timeLimit,
         scoreLimit,
-        botCount,
+        botCount: teamModeActive ? (teamCfg?.totalBots ?? botCount) : botCount,
         difficulty,
         isMultiplayer: effectivelyMultiplayer,
         roomCode: targetRoom,
+        gameMode,
+        playerTeamId: teamModeActive ? 0 : undefined
       },
       customizedClass,
       playerName || 'Recruit_Soldier'
@@ -883,13 +898,72 @@ export const Lobby: React.FC<LobbyProps> = ({
                   )}
                 </div>
 
-            {/* Map selection */}
+            {/* Game Mode Selector */}
+            <div className="space-y-2">
+              <label className="block text-[10px] font-mono text-slate-400 uppercase">
+                Game Mode
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {GAME_MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    id={`gamemode-btn-${mode.id}`}
+                    onClick={() => {
+                      setGameMode(mode.id);
+                      sounds.playShoot('KNIFE');
+                    }}
+                    className={`py-2.5 px-2 rounded-xl text-xs font-sans font-bold transition-all text-left ${
+                      gameMode === mode.id
+                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/50 shadow-sm'
+                        : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="font-bold text-sm">{mode.label}</div>
+                    <div className="text-[9px] text-slate-500 mt-0.5 leading-tight">{mode.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Team Mode Info Banner */}
+            {teamModeActive && teamCfg && (
+              <div className="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-xl space-y-2">
+                <div className="text-[10px] font-mono font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5" /> Team Configuration
+                </div>
+                <div className="flex gap-2">
+                  {Array.from({ length: teamCfg.teamCount }).map((_, t) => (
+                    <div
+                      key={t}
+                      className="flex-1 p-2 rounded-lg border text-center"
+                      style={{
+                        borderColor: TEAM_COLORS[t] + '60',
+                        backgroundColor: TEAM_COLORS[t] + '15'
+                      }}
+                    >
+                      <div className="text-[9px] font-mono font-bold" style={{ color: TEAM_COLORS[t] }}>
+                        {TEAM_NAMES[t]}
+                      </div>
+                      <div className="text-[10px] font-mono text-slate-300 mt-0.5">
+                        {teamCfg.perTeam} Player{teamCfg.perTeam > 1 ? 's' : ''}
+                      </div>
+                      {t === 0 && <div className="text-[8px] font-mono text-emerald-400 mt-0.5">YOUR TEAM</div>}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[9px] font-mono text-slate-400 text-center">
+                  Total: {teamCfg.teamCount} teams x {teamCfg.perTeam} per team = {teamCfg.teamCount * teamCfg.perTeam} fighters
+                </div>
+              </div>
+            )}
+
+            {/* Map selection (filtered by game mode) */}
             <div className="space-y-2">
               <label className="block text-[10px] font-mono text-slate-400 uppercase">
                 Active Map Zone
               </label>
               <div className="grid grid-cols-3 gap-2">
-                {MAPS.map((m) => (
+                {MAPS.filter(m => availableMapsForMode.includes(m.id as any)).map((m) => (
                   <button
                     key={m.id}
                     id={`map-select-btn-${m.id}`}
@@ -913,7 +987,8 @@ export const Lobby: React.FC<LobbyProps> = ({
               </p>
             </div>
 
-            {/* Bot Count Slider */}
+            {/* Bot Count Slider (hidden in team modes — bot count is auto) */}
+            {!teamModeActive && (
             <div className="space-y-2">
               <div className="flex justify-between text-xs font-mono text-slate-400">
                 <span>BOT ENEMIES</span>
@@ -940,6 +1015,7 @@ export const Lobby: React.FC<LobbyProps> = ({
                   : `Free-for-all contains (You + ${botCount} Active Bots)`}
               </span>
             </div>
+            )}
 
             {/* Difficulty Level */}
             <div className="space-y-2">

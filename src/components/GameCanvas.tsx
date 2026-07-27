@@ -11,7 +11,11 @@ import {
   Weapon,
   WeaponAmmo,
   KeyBindings,
-  GraphicsQuality
+  GraphicsQuality,
+  GameMode,
+  TEAM_COLORS,
+  isTeamMode,
+  getTeamConfig
 } from '../types';
 import { buildMap, CollidableBox } from '../game/MapBuilder';
 import { sounds } from '../lib/sounds';
@@ -182,6 +186,7 @@ export interface BotEntity {
   behaviorTimer?: number;
   lastDodgeTime?: number;
   suppressFireTimer?: number;
+  teamId?: number; // Team index (0, 1, 2) for team modes; undefined = FFA
 }
 
 export const createBot = (
@@ -547,6 +552,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     playerWeaponKills: Record<string, number>;
     playerIsDead: boolean;
     playerRespawnTimer: number;
+    playerTeamId: number; // Player's team in team modes
+
+    // Team mode state
+    gameMode: GameMode;
+    teamScores: number[];
 
     // Movement keys
     keys: Record<string, boolean>;
@@ -644,6 +654,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     playerWeaponKills: {},
     playerIsDead: false,
     playerRespawnTimer: 0,
+    playerTeamId: config.playerTeamId || 0,
+
+    gameMode: config.gameMode || 'FFA',
+    teamScores: [0, 0, 0],
     keys: {},
     pitch: 0,
     yaw: 0,
@@ -1789,8 +1803,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     // Choose bot classes randomly and model styles
-    for (let i = 0; i < config.botCount; i++) {
-      bots.push(spawnBot(i));
+    const teamMode = isTeamMode(config.gameMode);
+    const teamCfg = teamMode ? getTeamConfig(config.gameMode!) : null;
+
+    for (let i = 0; i < (teamMode ? teamCfg!.totalBots : config.botCount); i++) {
+      const bot = spawnBot(i);
+
+      // Assign teams in team mode
+      if (teamMode && teamCfg) {
+        // Player is on team 0, distribute bots across remaining team slots
+        // Team assignment: player takes 1 slot on team 0, bots fill the rest
+        let botTeamAssignment: number;
+        if (i < (teamCfg.perTeam - 1)) {
+          // First (perTeam - 1) bots go to player's team (team 0)
+          botTeamAssignment = 0;
+        } else {
+          // Remaining bots distributed evenly across other teams
+          const remainingBots = teamCfg.totalBots - (teamCfg.perTeam - 1);
+          const botsPerOtherTeam = teamCfg.perTeam;
+          const otherTeamIndex = Math.floor((i - (teamCfg.perTeam - 1)) / botsPerOtherTeam);
+          botTeamAssignment = Math.min(otherTeamIndex + 1, teamCfg.teamCount - 1);
+        }
+        bot.teamId = botTeamAssignment;
+
+        // Apply team color to torso
+        const teamColorHex = TEAM_COLORS[botTeamAssignment] || TEAM_COLORS[0];
+        const teamColor = new THREE.Color(teamColorHex);
+        (bot.torsoMesh.material as THREE.MeshStandardMaterial).color.copy(teamColor);
+
+        // Also color the helmet/head slightly with team tint
+        const headMat = bot.headMesh.material as THREE.MeshStandardMaterial;
+        headMat.color.copy(teamColor).multiplyScalar(0.5).add(new THREE.Color(0x334155).multiplyScalar(0.5));
+      }
+
+      bots.push(bot);
     }
     game.bots = bots;
 
@@ -1804,7 +1850,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         kills: p.kills,
         deaths: p.deaths,
         assists: 0,
-        score: p.score
+        score: p.score,
+        teamId: teamMode ? (p.teamId ?? -1) : undefined
       }));
 
       const statsList: MatchStats[] = [
@@ -1817,7 +1864,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           deaths: game.playerDeaths,
           assists: 0,
           score: game.playerScore,
-          weaponKills: game.playerWeaponKills
+          weaponKills: game.playerWeaponKills,
+          teamId: teamMode ? game.playerTeamId : undefined
         }]),
         ...otherPlayersStats,
         ...bots.map(b => ({
@@ -1828,7 +1876,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           kills: b.kills,
           deaths: b.deaths,
           assists: 0,
-          score: b.score
+          score: b.score,
+          teamId: teamMode ? b.teamId : undefined
         }))
       ];
       // Sort descending by score
@@ -2277,9 +2326,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const onlineTargets: { playerObj: any; part: 'head' | 'body'; mesh: THREE.Mesh }[] = [];
       const targetMeshes: THREE.Object3D[] = [];
 
-      // Collect bot hit meshes
+      // Collect bot hit meshes (skip teammates in team mode)
       bots.forEach(b => {
         if (b.isDead) return;
+        const isTeammate = teamMode && b.teamId === game.playerTeamId;
+        if (isTeammate) return;
         b.meshGroup.traverse(child => {
           if (child instanceof THREE.Mesh) {
             targetMeshes.push(child);
@@ -2364,6 +2415,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           bots.forEach(b => {
             if (b.isDead) return;
+            const isTeammate = teamMode && b.teamId === game.playerTeamId;
+            if (isTeammate) return;
             const dist = b.position.distanceTo(hit.point);
             if (dist < explosionRadius) {
               let dmg = (effectiveDamage * (1 - dist / explosionRadius));
@@ -2548,6 +2601,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         awardKillAmmo();
         spawnAmmoPickup(bot.position.clone());
         game.playerScore += isHeadshot ? 150 : 100;
+
+        // Track team score
+        if (teamMode) {
+          game.teamScores[game.playerTeamId] = (game.teamScores[game.playerTeamId] || 0) + 1;
+        }
+
         sounds.playKill();
         const isSniper = game.activeWeapon.type === 'sniper';
               const isNoscope = isSniper && !game.isADS;
@@ -2727,7 +2786,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         kills: p.kills,
         deaths: p.deaths,
         assists: 0,
-        score: p.score
+        score: p.score,
+        teamId: teamMode ? (p.teamId ?? -1) : undefined
       }));
 
       const statsList: MatchStats[] = [
@@ -2742,7 +2802,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           score: game.playerScore,
           headshots: game.playerHeadshots || 0,
           timePlayedSeconds: Math.floor(game.playerTimePlayedSeconds || 0),
-          weaponKills: game.playerWeaponKills
+          weaponKills: game.playerWeaponKills,
+          teamId: teamMode ? game.playerTeamId : undefined
         }]),
         ...otherPlayersStats,
         ...bots.map(b => ({
@@ -2753,12 +2814,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           kills: b.kills,
           deaths: b.deaths,
           assists: 0,
-          score: b.score
+          score: b.score,
+          teamId: teamMode ? b.teamId : undefined
         }))
       ];
       statsList.sort((a, b) => b.score - a.score);
 
-      const isVictory = statsList[0].id === 'player';
+      // Determine victory
+      let isVictory = false;
+      if (teamMode) {
+        // In team mode, player wins if their team has the highest score
+        const teamCfg = getTeamConfig(game.gameMode);
+        let bestTeam = 0;
+        for (let t = 1; t < teamCfg.teamCount; t++) {
+          if ((game.teamScores[t] || 0) > (game.teamScores[bestTeam] || 0)) bestTeam = t;
+        }
+        isVictory = bestTeam === game.playerTeamId;
+      } else {
+        isVictory = statsList[0].id === 'player';
+      }
       sounds.playMatchEnd(isVictory);
 
       onMatchEnd(statsList);
@@ -2768,6 +2842,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const checkWinCondition = () => {
       if (config.isMultiplayer) return false; // In multiplayer, match_ended is sent by the server
 
+      // Team mode: check if any team reached score limit
+      if (teamMode) {
+        const teamCfg = getTeamConfig(game.gameMode);
+        for (let t = 0; t < teamCfg.teamCount; t++) {
+          if ((game.teamScores[t] || 0) >= game.scoreLimit) {
+            endMatch();
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // FFA: check individual scores
       if (game.playerKills >= game.scoreLimit) {
         endMatch();
         return true;
@@ -3859,24 +3946,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           let bestScore = -9000;
           let bestId: string | null = null;
 
-          // Check human player
+          // Check human player (skip if same team)
           if (!game.playerIsDead && !config.spectatorMode) {
-            const s = evaluateThreat('player', game.playerPos, game.playerHealth);
-            if (s > bestScore) { bestScore = s; bestId = 'player'; }
+            const isSameTeam = teamMode && bot.teamId === game.playerTeamId;
+            if (!isSameTeam) {
+              const s = evaluateThreat('player', game.playerPos, game.playerHealth);
+              if (s > bestScore) { bestScore = s; bestId = 'player'; }
+            }
           }
 
-          // Check other bots
+          // Check other bots (skip same team)
           for (const other of bots) {
             if (other.id === bot.id || other.isDead) continue;
+            const isSameTeam = teamMode && bot.teamId !== undefined && bot.teamId === other.teamId;
+            if (isSameTeam) continue;
             const s = evaluateThreat(other.id, other.position, other.health);
             if (s > bestScore) { bestScore = s; bestId = other.id; }
           }
 
-          // Check online players
+          // Check online players (skip same team)
           game.otherPlayers.forEach((p: any) => {
             if (p.health > 0 && !p.isSpectator) {
-              const s = evaluateThreat(p.id, p.position, p.health);
-              if (s > bestScore) { bestScore = s; bestId = p.id; }
+              const isSameTeam = teamMode && bot.teamId !== undefined && bot.teamId === (p.teamId ?? -1);
+              if (!isSameTeam) {
+                const s = evaluateThreat(p.id, p.position, p.health);
+                if (s > bestScore) { bestScore = s; bestId = p.id; }
+              }
             }
           });
 
@@ -4314,18 +4409,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const ray = new THREE.Raycaster(muzzlePos, shootDir);
       const targetList: THREE.Object3D[] = [];
 
-      // Add player if alive (accurate hit box)
-      const dummyPlayerMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, game.isProne ? 0.6 : 1.6, 0.5));
-      dummyPlayerMesh.position.copy(game.playerPos);
-      dummyPlayerMesh.position.y -= (game.isProne ? 0.2 : 0.6); // Camera is near top of hitbox
-      if (!game.playerIsDead) {
+      let dummyPlayerMesh: THREE.Mesh | null = null;
+      const isPlayerSameTeam = teamMode && bot.teamId === game.playerTeamId;
+      if (!game.playerIsDead && !isPlayerSameTeam) {
+        dummyPlayerMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, game.isProne ? 0.6 : 1.6, 0.5));
+        dummyPlayerMesh.position.copy(game.playerPos);
+        dummyPlayerMesh.position.y -= (game.isProne ? 0.2 : 0.6); // Camera is near top of hitbox
         targetList.push(dummyPlayerMesh);
       }
 
-      // Add other bots
+      // Add other bots (skip same team)
       bots.forEach(other => {
         if (other.id !== bot.id && !other.isDead) {
-          targetList.push(other.meshGroup);
+          const isSameTeam = teamMode && bot.teamId !== undefined && bot.teamId === other.teamId;
+          if (!isSameTeam) {
+            targetList.push(other.meshGroup);
+          }
         }
       });
 
@@ -4365,6 +4464,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
               bot.kills++;
               bot.score += 100;
+
+              // Track team score for bot kills
+              if (teamMode && bot.teamId !== undefined) {
+                game.teamScores[bot.teamId] = (game.teamScores[bot.teamId] || 0) + 1;
+              }
+
               spawnKillPopup(otherBot.position.clone().setY(2.0), "ELIMINATED");
 
               // Push killfeed

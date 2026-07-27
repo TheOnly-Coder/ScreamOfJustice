@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, CharacterClass, MatchConfig, MatchStats, KillFeedEntry, KeyBindings, DEFAULT_KEYBINDINGS, TouchBindings, DEFAULT_TOUCHBINDINGS, Weapon, GraphicsQuality } from './types';
+import { GameState, CharacterClass, MatchConfig, MatchStats, KillFeedEntry, KeyBindings, DEFAULT_KEYBINDINGS, TouchBindings, DEFAULT_TOUCHBINDINGS, Weapon, GraphicsQuality, isTeamMode } from './types';
 import { Lobby } from './components/Lobby';
 import { GameCanvas } from './components/GameCanvas';
 import { GameHUD } from './components/GameHUD';
@@ -117,6 +117,10 @@ export default function App() {
     return () => clearInterval(interval);
   }, [abilityCooldownLeft]);
 
+  // Team mode state
+  const [gameMode, setGameMode] = useState<string>('FFA');
+  const [teamScores, setTeamScores] = useState<number[]>([]);
+
   const handleStartGame = (config: MatchConfig, selectedClass: CharacterClass, name: string) => {
     if (user?.isFrozen) {
       alert("Your account is currently frozen. You cannot participate in matches.");
@@ -126,6 +130,8 @@ export default function App() {
     setPlayerClass(selectedClass);
     // Use the logged-in user's name if available
     setPlayerName(user?.username || name);
+    setGameMode(config.gameMode || 'FFA');
+    setTeamScores([]);
 
     // Initial resets
     setPlayerHealth(selectedClass.maxHealth);
@@ -186,6 +192,16 @@ export default function App() {
 
   const handleMatchEnd = async (finalStats: MatchStats[]) => {
     setStats(finalStats);
+    // In team mode, compute team scores from stats
+    if (isTeamMode(gameMode as any)) {
+      const scores = [0, 0, 0];
+      finalStats.forEach(s => {
+        if (s.teamId !== undefined && s.teamId >= 0 && s.teamId < 3) {
+          scores[s.teamId] += s.kills;
+        }
+      });
+      setTeamScores(scores);
+    }
     setGameState('POST_MATCH');
     
     if (user && !user.isGuest) {
@@ -385,6 +401,9 @@ export default function App() {
           stats={stats}
           playerName={playerName}
           onRestart={() => setGameState('LOBBY')}
+          gameMode={gameMode}
+          playerTeamId={matchConfig?.playerTeamId}
+          teamScores={teamScores}
         />
       )}
     </div>
