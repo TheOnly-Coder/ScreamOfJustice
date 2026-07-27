@@ -178,6 +178,10 @@ export interface BotEntity {
   lastPosTimer?: number;
   strafeDir?: number;
   strafeTimer?: number;
+  behaviorState?: 'patrol' | 'advance' | 'hold' | 'retreat';
+  behaviorTimer?: number;
+  lastDodgeTime?: number;
+  suppressFireTimer?: number;
 }
 
 export const createBot = (
@@ -395,7 +399,11 @@ export const createBot = (
     lastPos: botSpawn.clone(),
     lastPosTimer: 0,
     strafeDir: Math.random() < 0.5 ? 1 : -1,
-    strafeTimer: 0
+    strafeTimer: 0,
+    behaviorState: 'patrol',
+    behaviorTimer: 2.0 + Math.random() * 3.0,
+    lastDodgeTime: 0,
+    suppressFireTimer: 0
   };
 };
 
@@ -1919,7 +1927,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       if (document.pointerLockElement === canvasRef.current) {
         // Pointer Locked Movement
-        const sensitivity = 0.0016 * currentSensMult;
+        let sensitivity = 0.0016 * currentSensMult;
+
+        // COD-style aim assist friction: slow down mouse near targets
+        // This makes it easier to stay on target without snapping to it
+        if (game._aimAssistActive && game._aimAssistStrength > 0.05) {
+          const aimAssistMode = localStorage.getItem('codm_aim_assist') || 'OFF';
+          const frictionAmount = aimAssistMode === 'HEAVY' ? 0.55 : 0.35;
+          // Only apply friction when mouse movement is in the same direction as the target
+          // (i.e., you're trying to track the target, not move away)
+          const yawMoving = e.movementX * (game._aimAssistYawDiff || 0);
+          const pitchMoving = e.movementY * (game._aimAssistPitchDiff || 0);
+          if (yawMoving > 0 || pitchMoving > 0) {
+            // Moving toward target — apply friction to slow down and not overshoot
+            const friction = 1.0 - frictionAmount * game._aimAssistStrength;
+            sensitivity *= Math.max(friction, 0.3);
+          }
+        }
+
         // Filter out massive spikes which cause the camera to snap randomly
         if (Math.abs(e.movementX) < 200) game.yaw -= e.movementX * sensitivity;
         if (Math.abs(e.movementY) < 200) game.pitch -= e.movementY * sensitivity;
@@ -1930,7 +1955,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         lastMouseX = e.clientX;
         lastMouseY = e.clientY;
 
-        const dragSensitivity = 0.0025 * currentSensMult;
+        let dragSensitivity = 0.0025 * currentSensMult;
+        if (game._aimAssistActive && game._aimAssistStrength > 0.05) {
+          const friction = 1.0 - 0.35 * game._aimAssistStrength;
+          dragSensitivity *= Math.max(friction, 0.3);
+        }
         game.yaw -= deltaX * dragSensitivity;
         game.pitch -= deltaY * dragSensitivity;
       }
@@ -3005,38 +3034,47 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           game.pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, targetPitch));
         }
       } else if (!game.playerIsDead) {
-        // TACTICAL AIM ASSIST SYSTEM (LIGHT or HEAVY)
+        // TACTICAL AIM ASSIST SYSTEM (COD-style rotational slow-down + slight pull)
+        // This reduces mouse sensitivity near targets (crosshair friction) and gently
+        // pulls the crosshair toward the nearest enemy — exactly like Call of Duty.
         const aimAssistMode = localStorage.getItem('codm_aim_assist') || 'OFF';
         if (aimAssistMode !== 'OFF') {
           const camDir = new THREE.Vector3();
           camera.getWorldDirection(camDir);
 
           let bestTarget: THREE.Vector3 | null = null;
-          let smallestAngle = aimAssistMode === 'HEAVY' ? 0.15 : 0.08; // radians
+          let bestAngle = Infinity;
+          let bestDist = Infinity;
+
+          // FOV cone for aim assist activation
+          const assistFOV = aimAssistMode === 'HEAVY' ? 0.20 : 0.12; // ~11° or ~7°
 
           const checkEntity = (entity: any, health: number, maxHealth: number) => {
-            if (health < maxHealth) return; // Stop aim assist once target takes damage
-
             const basePos = entity.meshGroup.position;
             const targetPos = basePos.clone().add(new THREE.Vector3(0, 1.2, 0)); // Center chest
-            const toTarget = targetPos.clone().sub(camera.position).normalize();
+            const toTarget = targetPos.clone().sub(camera.position);
+            const dist = toTarget.length();
+            toTarget.normalize();
             const angle = camDir.angleTo(toTarget);
 
-            if (angle < smallestAngle) {
+            if (angle < assistFOV) {
               // Line-of-sight check
               const ray = new THREE.Raycaster(camera.position, toTarget);
               const obstacleHits = ray.intersectObjects(game.colliders.map(c => c.mesh));
-              const distToEntity = camera.position.distanceTo(targetPos);
 
-              if (obstacleHits.length === 0 || obstacleHits[0].distance >= distToEntity - 0.5) {
-                smallestAngle = angle;
-                bestTarget = targetPos;
+              if (obstacleHits.length === 0 || obstacleHits[0].distance >= dist - 0.5) {
+                // Prefer closer targets, break ties by angle
+                if (angle < bestAngle || (Math.abs(angle - bestAngle) < 0.01 && dist < bestDist)) {
+                  bestAngle = angle;
+                  bestDist = dist;
+                  bestTarget = targetPos;
+                }
               }
             }
           };
 
           bots.forEach(b => { if (!b.isDead) checkEntity(b, b.health, b.maxHealth); });
-          game.otherPlayers.forEach(p => checkEntity(p, p.health || 100, 100)); // multiplayer placeholder
+          game.otherPlayers.forEach(p => checkEntity(p, p.health || 100, 100));
 
           if (bestTarget) {
             const dir = (bestTarget as THREE.Vector3).clone().sub(camera.position);
@@ -3047,12 +3085,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             let yawDiff = targetYaw - game.yaw;
             while (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
             while (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
+            const pitchDiff = targetPitch - game.pitch;
 
-            const pullSpeed = (aimAssistMode === 'HEAVY' ? 1.5 : 0.6) * delta;
-            game.yaw += yawDiff * pullSpeed;
-            game.pitch += (targetPitch - game.pitch) * pullSpeed;
+            // COD-style aim assist: two components
+            // 1. ROTATIONAL SLOWDOWN (friction) — the closer your crosshair to the target,
+            //    the more your sensitivity is reduced. This is the primary effect.
+            // 2. GENTLE PULL — a very subtle pull toward the target that gets stronger
+            //    the closer you are to it (but never snaps).
+            const angleToTarget = Math.sqrt(yawDiff * yawDiff + pitchDiff * pitchDiff);
+
+            // Normalized proximity: 1.0 = dead on target, 0.0 = at edge of assist cone
+            const proximity = 1.0 - Math.min(angleToTarget / assistFOV, 1.0);
+            const strength = proximity * proximity; // Quadratic falloff — strong when close, weak when far
+
+            // Apply pull toward target (crosshair moves toward enemy)
+            const pullStrength = (aimAssistMode === 'HEAVY' ? 0.08 : 0.04) * strength;
+            game.yaw += yawDiff * pullStrength;
+            game.pitch += pitchDiff * pullStrength;
             game.pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, game.pitch));
+
+            // Store aim assist data so mouse movement can apply friction
+            game._aimAssistActive = true;
+            game._aimAssistStrength = strength;
+            game._aimAssistYawDiff = yawDiff;
+            game._aimAssistPitchDiff = pitchDiff;
+          } else {
+            game._aimAssistActive = false;
+            game._aimAssistStrength = 0;
           }
+        } else {
+          game._aimAssistActive = false;
+          game._aimAssistStrength = 0;
         }
       }
 
@@ -3682,13 +3745,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
-        // Tactical strafe timer
-        bot.strafeTimer = (bot.strafeTimer || 0) - delta;
-        if (bot.strafeTimer <= 0) {
-          bot.strafeTimer = 1.2 + Math.random() * 2.0;
-          bot.strafeDir = Math.random() < 0.5 ? 1 : -1;
-        }
-
         if (targetPos) {
           // Combat Mode: Look at enemy & Steer towards them or fire!
           const dirToTarget = targetPos.clone().sub(bot.position);
@@ -3702,21 +3758,83 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           const distance = bot.position.distanceTo(targetPos);
 
-          if (distance > bot.activeWeapon.range * 0.45) {
-            moveDir.copy(dirToTarget).normalize();
-          } else if (distance < 4.5) {
-            moveDir.copy(dirToTarget).negate().normalize();
+          // BEHAVIOR STATE MACHINE (instead of constant strafing)
+          bot.behaviorTimer = (bot.behaviorTimer || 2) - delta;
+          if (bot.behaviorTimer <= 0) {
+            const hpPct = bot.health / bot.maxHealth;
+            const roll = Math.random();
+
+            if (hpPct < 0.3) {
+              // Low health: mostly retreat, sometimes hold
+              bot.behaviorState = roll < 0.65 ? 'retreat' : 'hold';
+              bot.behaviorTimer = 1.5 + Math.random() * 2.0;
+            } else if (distance < 6) {
+              // Close range: mix of hold (stand and shoot) and retreat
+              bot.behaviorState = roll < 0.45 ? 'hold' : roll < 0.7 ? 'retreat' : 'advance';
+              bot.behaviorTimer = 1.0 + Math.random() * 2.0;
+            } else if (distance < 15) {
+              // Mid range: advance to get closer, or hold and shoot
+              bot.behaviorState = roll < 0.4 ? 'advance' : roll < 0.75 ? 'hold' : 'patrol';
+              bot.behaviorTimer = 1.5 + Math.random() * 2.5;
+            } else {
+              // Long range: advance towards target
+              bot.behaviorState = roll < 0.7 ? 'advance' : 'patrol';
+              bot.behaviorTimer = 2.0 + Math.random() * 3.0;
+            }
           }
 
-          // Tactical Strafe / Flanking offset
-          const localRight = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), bot.rotationY);
-          moveDir.add(localRight.multiplyScalar((bot.strafeDir || 1) * 0.5)).normalize();
+          // Execute behavior state
+          switch (bot.behaviorState) {
+            case 'advance':
+              if (distance > bot.activeWeapon.range * 0.35) {
+                moveDir.copy(dirToTarget).normalize();
+                // Slight weave while advancing (not a hard strafe)
+                const weave = Math.sin(time * 0.002 + bot.id.charCodeAt(4)) * 0.15;
+                const localRight = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), bot.rotationY);
+                moveDir.add(localRight.multiplyScalar(weave)).normalize();
+              }
+              break;
+
+            case 'hold':
+              // Stand still and shoot - minimal movement, only tiny adjustments
+              // Occasionally sidestep slightly to avoid being a sitting duck
+              const holdWeave = Math.sin(time * 0.001 + bot.id.charCodeAt(3)) * 0.08;
+              const holdRight = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), bot.rotationY);
+              moveDir.copy(holdRight.multiplyScalar(holdWeave));
+              break;
+
+            case 'retreat':
+              moveDir.copy(dirToTarget).negate().normalize();
+              // While retreating, do NOT add strafe - just back up cleanly
+              break;
+
+            case 'patrol':
+            default:
+              // Sideways patrol movement around the target
+              const localR = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), bot.rotationY);
+              moveDir.copy(localR.multiplyScalar(bot.strafeDir || 1));
+              break;
+          }
+
+          // Only strafe direction change happens on wall collision now, not on a timer
+          // Strafe timer only used for patrol state direction flips
+          if (bot.behaviorState === 'patrol') {
+            bot.strafeTimer = (bot.strafeTimer || 0) - delta;
+            if (bot.strafeTimer <= 0) {
+              bot.strafeTimer = 2.5 + Math.random() * 3.0;
+              bot.strafeDir = Math.random() < 0.5 ? 1 : -1;
+            }
+          }
 
           // Fire at target if cooldown elapsed
+          // Don't fire while actively retreating (suppression fire only)
           if (bot.shootCooldownRemaining <= 0) {
+            const isRetreating = bot.behaviorState === 'retreat';
             let delayMod = 3.0; // Normal difficulty
             if (config.difficulty === 'EASY') delayMod = 4.5;
             if (config.difficulty === 'HARD') delayMod = 1.0;
+            // Retreating bots shoot much less frequently
+            if (isRetreating) delayMod *= 3.0;
             const cheats = adminTargetCheatsRef.current[bot.id] || { rapidFire: false };
             if (cheats.rapidFire) delayMod = 0.2;
             bot.shootCooldownRemaining = bot.activeWeapon.fireRate * delayMod;
@@ -3725,6 +3843,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         } else {
           // Patrol Mode: Head towards waypoint
+          bot.behaviorState = 'patrol';
           if (bot.position.distanceTo(bot.patrolWaypoint) < 3.0) {
             bot.patrolWaypoint.copy(game.spawnPoints[Math.floor(Math.random() * game.spawnPoints.length)]);
           }
@@ -3741,6 +3860,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           moveDir.copy(dirToWaypoint).normalize();
         }
 
+        // Strafe timer for patrol (only ticks when no target)
+        if (!targetPos) {
+          bot.strafeTimer = (bot.strafeTimer || 0) - delta;
+          if (bot.strafeTimer <= 0) {
+            bot.strafeTimer = 2.5 + Math.random() * 3.0;
+            bot.strafeDir = Math.random() < 0.5 ? 1 : -1;
+          }
+        }
+
         // Raycast Obstacle Avoidance ahead of movement direction
         if (moveDir.lengthSq() > 0.01) {
           const fwdRay = new THREE.Raycaster(
@@ -3749,7 +3877,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           );
           const wallHits = fwdRay.intersectObjects(game.colliders.map(c => c.mesh));
           if (wallHits.length > 0 && wallHits[0].distance < 1.2) {
-            // Obstacle ahead! Steer laterally to slide around corner
+            // Obstacle ahead! Pick a new behavior and redirect
+            bot.behaviorTimer = 0; // Force re-evaluation next frame
             const perp = new THREE.Vector3(-moveDir.z, 0, moveDir.x).multiplyScalar(bot.strafeDir || 1);
             moveDir.add(perp.multiplyScalar(2.0)).normalize();
           }
@@ -3833,8 +3962,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             bot.velocity.y = 8.5;
             bot.jumpTimer = 1.5;
           } else if (botCollideX) {
-            bot.rotationY += (Math.PI / 2) * (bot.strafeDir || 1);
-            bot.strafeDir = (bot.strafeDir || 1) * -1;
+            bot.behaviorTimer = 0; // Re-evaluate behavior instead of snapping rotation
           }
         }
 
@@ -3874,8 +4002,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             bot.velocity.y = 8.5;
             bot.jumpTimer = 1.5;
           } else if (botCollideZ) {
-            bot.rotationY += (Math.PI / 2) * (bot.strafeDir || 1);
-            bot.strafeDir = (bot.strafeDir || 1) * -1;
+            bot.behaviorTimer = 0; // Re-evaluate behavior instead of snapping rotation
           }
         }
 
