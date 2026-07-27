@@ -195,8 +195,10 @@ export const createBot = (
 
   const meshGroup = new THREE.Group();
 
-  const legGeo = new THREE.BoxGeometry(0.28, 0.6, 0.3);
-  const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+  // LOW-POLY ORGANIC CHARACTER MODEL
+  // Legs: hexagonal cylinders instead of boxes
+  const legGeo = new THREE.CylinderGeometry(0.15, 0.13, 0.6, 6);
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
   
   const leftLeg = new THREE.Mesh(legGeo, legMat);
   leftLeg.position.set(-0.24, 0.3, 0);
@@ -208,7 +210,41 @@ export const createBot = (
   rightLeg.castShadow = true;
   meshGroup.add(rightLeg);
 
+  // Kneepads (small cylinders on front of legs)
+  const kneeGeo = new THREE.SphereGeometry(0.08, 4, 3);
+  const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+  const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
+  kneeL.position.set(-0.24, 0.35, 0.12);
+  kneeL.scale.set(1, 0.8, 0.6);
+  meshGroup.add(kneeL);
+  const kneeR = kneeL.clone();
+  kneeR.position.x = 0.24;
+  meshGroup.add(kneeR);
+
+  // Boots (flat-bottomed cylinders)
+  const bootGeo = new THREE.CylinderGeometry(0.16, 0.17, 0.15, 6);
+  const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
+  const bootL = new THREE.Mesh(bootGeo, bootMat);
+  bootL.position.set(-0.24, 0.075, 0.02);
+  meshGroup.add(bootL);
+  const bootR = bootL.clone();
+  bootR.position.x = 0.24;
+  meshGroup.add(bootR);
+
+  // Torso: tapered body (wider shoulders, narrow waist) using modified box
   const torsoGeo = new THREE.BoxGeometry(0.85, 0.75, 0.5);
+  const torsoPos = torsoGeo.attributes.position;
+  for (let i = 0; i < torsoPos.count; i++) {
+    const y = torsoPos.getY(i);
+    const normalizedY = (y + 0.375) / 0.75; // 0 at bottom, 1 at top
+    const taperFactor = 0.7 + 0.3 * normalizedY; // wider at top (shoulders)
+    torsoPos.setX(i, torsoPos.getX(i) * taperFactor);
+    // Slight forward lean at top
+    if (normalizedY > 0.7) {
+      torsoPos.setZ(i, torsoPos.getZ(i) - (normalizedY - 0.7) * 0.15);
+    }
+  }
+  torsoGeo.computeVertexNormals();
   const torsoMat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(botClass.color),
     roughness: 0.8,
@@ -220,18 +256,36 @@ export const createBot = (
   torso.receiveShadow = true;
   meshGroup.add(torso);
 
+  // Tactical belt at waist
+  const beltGeo = new THREE.TorusGeometry(0.35, 0.04, 4, 8);
+  const beltMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.6, flatShading: true });
+  const belt = new THREE.Mesh(beltGeo, beltMat);
+  belt.position.set(0, 0.6, 0);
+  belt.rotation.x = Math.PI / 2;
+  belt.scale.set(1, 1, 0.6);
+  meshGroup.add(belt);
+
+  // Pouch on back
   const pouchGeo = new THREE.BoxGeometry(0.25, 0.22, 0.12);
-  const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
+  const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, flatShading: true });
   const pouch = new THREE.Mesh(pouchGeo, pouchMat);
   pouch.position.set(0, 0.95, 0.28);
   meshGroup.add(pouch);
 
-  const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-  const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
+  // Head: low-poly icosahedron (sphere-like, not cubic)
+  const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
+  const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8, flatShading: true });
   const head = new THREE.Mesh(headGeo, headMat);
   head.position.y = 1.6;
   head.castShadow = true;
   meshGroup.add(head);
+
+  // Helmet brim (flat cylinder on top)
+  const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
+  const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
+  const helmet = new THREE.Mesh(helmetGeo, helmetMat);
+  helmet.position.set(0, 1.62, -0.02);
+  meshGroup.add(helmet);
 
   if (botClass.id === 'assault') {
     const maskGeo = new THREE.BoxGeometry(0.44, 0.35, 0.08);
@@ -262,9 +316,21 @@ export const createBot = (
     meshGroup.add(eyeR);
   }
 
-  const armGeo = new THREE.BoxGeometry(0.22, 0.65, 0.22);
-  const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(botClass.color), roughness: 0.8 });
+  // Arms: tapered cylinders instead of boxes
+  const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
+  const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(botClass.color), roughness: 0.8, flatShading: true });
   
+  // Shoulder pads
+  const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
+  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+  const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
+  shoulderL.position.set(-0.48, 1.35, 0);
+  shoulderL.scale.set(1.2, 0.8, 1);
+  meshGroup.add(shoulderL);
+  const shoulderR = shoulderL.clone();
+  shoulderR.position.x = 0.48;
+  meshGroup.add(shoulderR);
+
   const leftArm = new THREE.Mesh(armGeo, armMat);
   leftArm.position.set(-0.52, 1.15, 0);
   leftArm.castShadow = true;
@@ -283,7 +349,7 @@ export const createBot = (
   scene.add(meshGroup);
 
   const botHeadBox = new THREE.Mesh(
-    new THREE.BoxGeometry(0.55, 0.55, 0.55),
+    new THREE.SphereGeometry(0.32, 4, 4),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
   );
   botHeadBox.position.copy(head.position);
@@ -691,18 +757,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const charClass = CLASSES.find(c => c.id === classId) || CLASSES[0];
       
       // 1. Combat Boots (Feet at y = 0.1)
-      const bootGeo = new THREE.BoxGeometry(0.28, 0.25, 0.45);
-      const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9 });
+      const bootGeo = new THREE.CylinderGeometry(0.15, 0.16, 0.25, 6);
+      const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
       const bootL = new THREE.Mesh(bootGeo, bootMat);
-      bootL.position.set(-0.2, 0.125, 0);
+      bootL.position.set(-0.2, 0.125, 0.02);
       const bootR = bootL.clone();
       bootR.position.x = 0.2;
       meshGroup.add(bootL);
       meshGroup.add(bootR);
 
-      // 2. Armored Legs & Kneepads
-      const legGeo = new THREE.BoxGeometry(0.26, 0.65, 0.3);
-      const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+      // 2. Armored Legs: hexagonal cylinders with kneepads
+      const legGeo = new THREE.CylinderGeometry(0.14, 0.12, 0.65, 6);
+      const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
       const legL = new THREE.Mesh(legGeo, legMat);
       legL.position.set(-0.2, 0.5, 0);
       const legR = legL.clone();
@@ -710,13 +776,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       meshGroup.add(legL);
       meshGroup.add(legR);
 
+      // Kneepads
+      const kneeGeo = new THREE.SphereGeometry(0.07, 4, 3);
+      const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+      const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
+      kneeL.position.set(-0.2, 0.55, 0.12);
+      kneeL.scale.set(1, 0.8, 0.6);
+      const kneeR = kneeL.clone();
+      kneeR.position.x = 0.2;
+      meshGroup.add(kneeL);
+      meshGroup.add(kneeR);
+
       // Upper Body Group (pivot at Y = 1.15 for pitch tilting)
       const upperBodyGroup = new THREE.Group();
       upperBodyGroup.position.set(0, 1.15, 0);
       meshGroup.add(upperBodyGroup);
 
-      // 3. Tactical Body Armor / Kevlar Vest
+      // 3. Tactical Body Armor / Kevlar Vest - tapered torso
       const torsoGeo = new THREE.BoxGeometry(0.85, 0.85, 0.55);
+      const torsoPosAttr = torsoGeo.attributes.position;
+      for (let i = 0; i < torsoPosAttr.count; i++) {
+        const y = torsoPosAttr.getY(i);
+        const normalizedY = (y + 0.425) / 0.85;
+        const taperFactor = 0.7 + 0.3 * normalizedY;
+        torsoPosAttr.setX(i, torsoPosAttr.getX(i) * taperFactor);
+        if (normalizedY > 0.7) {
+          torsoPosAttr.setZ(i, torsoPosAttr.getZ(i) - (normalizedY - 0.7) * 0.15);
+        }
+      }
+      torsoGeo.computeVertexNormals();
       const torsoMat = new THREE.MeshStandardMaterial({
         color: new THREE.Color(charClass.color),
         roughness: 0.7,
@@ -738,9 +826,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       upperBodyGroup.add(pouch1);
       upperBodyGroup.add(pouch2);
 
-      // Arms
-      const armGeo = new THREE.BoxGeometry(0.22, 0.65, 0.22);
-      const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(charClass.color), roughness: 0.8 });
+      // Arms: tapered cylinders with shoulder pads
+      const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
+      const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+      const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
+      shoulderL.position.set(-0.48, 0.22, 0);
+      shoulderL.scale.set(1.2, 0.8, 1);
+      upperBodyGroup.add(shoulderL);
+      const shoulderR = shoulderL.clone();
+      shoulderR.position.x = 0.48;
+      upperBodyGroup.add(shoulderR);
+
+      const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
+      const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(charClass.color), roughness: 0.8, flatShading: true });
       const leftArm = new THREE.Mesh(armGeo, armMat);
       leftArm.position.set(-0.52, 0, 0);
       leftArm.castShadow = true;
@@ -751,13 +849,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       rightArm.castShadow = true;
       upperBodyGroup.add(rightArm);
 
-      // 4. Tactical Helmet with Glowing Visor
-      const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-      const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7 });
+      // 4. Head: low-poly icosahedron with helmet
+      const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
+      const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7, flatShading: true });
       const head = new THREE.Mesh(headGeo, headMat);
       head.position.set(0, 0.55, 0);
       head.castShadow = true;
       upperBodyGroup.add(head);
+
+      // Helmet shell
+      const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
+      const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
+      const helmet = new THREE.Mesh(helmetGeo, helmetMat);
+      helmet.position.set(0, 0.57, -0.02);
+      upperBodyGroup.add(helmet);
 
       // Glowing visor strip across helmet face
       const visorGeo = new THREE.BoxGeometry(0.44, 0.12, 0.08);
@@ -768,7 +873,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // Invisible head hitbox for precise headshots
       const headHitbox = new THREE.Mesh(
-        new THREE.BoxGeometry(0.55, 0.55, 0.55),
+        new THREE.SphereGeometry(0.32, 4, 4),
         new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
       );
       headHitbox.position.set(0, 0.55, 0);
@@ -1463,10 +1568,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       const meshGroup = new THREE.Group();
 
-      // Assemble articulated CoD low-poly tactical soldier
-      // 1. Legs (Pivotable around hip height y = 0.6)
-      const legGeo = new THREE.BoxGeometry(0.28, 0.6, 0.3);
-      const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+      // LOW-POLY ORGANIC CHARACTER MODEL
+      // 1. Legs: hexagonal cylinders (pivotable around hip height y = 0.6)
+      const legGeo = new THREE.CylinderGeometry(0.15, 0.13, 0.6, 6);
+      const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
       
       const leftLeg = new THREE.Mesh(legGeo, legMat);
       leftLeg.position.set(-0.24, 0.3, 0);
@@ -1478,8 +1583,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       rightLeg.castShadow = true;
       meshGroup.add(rightLeg);
 
-      // 2. Torso (Center y = 0.95)
+      // Kneepads
+      const kneeGeo = new THREE.SphereGeometry(0.08, 4, 3);
+      const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+      const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
+      kneeL.position.set(-0.24, 0.35, 0.12);
+      kneeL.scale.set(1, 0.8, 0.6);
+      meshGroup.add(kneeL);
+      const kneeR = kneeL.clone();
+      kneeR.position.x = 0.24;
+      meshGroup.add(kneeR);
+
+      // Boots
+      const bootGeo = new THREE.CylinderGeometry(0.16, 0.17, 0.15, 6);
+      const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
+      const bootL = new THREE.Mesh(bootGeo, bootMat);
+      bootL.position.set(-0.24, 0.075, 0.02);
+      meshGroup.add(bootL);
+      const bootR = bootL.clone();
+      bootR.position.x = 0.24;
+      meshGroup.add(bootR);
+
+      // 2. Torso: tapered body (wider shoulders, narrow waist)
       const torsoGeo = new THREE.BoxGeometry(0.85, 0.75, 0.5);
+      const torsoPos = torsoGeo.attributes.position;
+      for (let i = 0; i < torsoPos.count; i++) {
+        const y = torsoPos.getY(i);
+        const normalizedY = (y + 0.375) / 0.75;
+        const taperFactor = 0.7 + 0.3 * normalizedY;
+        torsoPos.setX(i, torsoPos.getX(i) * taperFactor);
+        if (normalizedY > 0.7) {
+          torsoPos.setZ(i, torsoPos.getZ(i) - (normalizedY - 0.7) * 0.15);
+        }
+      }
+      torsoGeo.computeVertexNormals();
       const torsoMat = new THREE.MeshStandardMaterial({
         color: new THREE.Color(botClass.color),
         roughness: 0.8,
@@ -1491,20 +1628,36 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       torso.receiveShadow = true;
       meshGroup.add(torso);
 
+      // Tactical belt
+      const beltGeo = new THREE.TorusGeometry(0.35, 0.04, 4, 8);
+      const beltMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.6, flatShading: true });
+      const belt = new THREE.Mesh(beltGeo, beltMat);
+      belt.position.set(0, 0.6, 0);
+      belt.rotation.x = Math.PI / 2;
+      belt.scale.set(1, 1, 0.6);
+      meshGroup.add(belt);
+
       // Tactical chest pouch
       const pouchGeo = new THREE.BoxGeometry(0.25, 0.22, 0.12);
-      const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
+      const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, flatShading: true });
       const pouch = new THREE.Mesh(pouchGeo, pouchMat);
       pouch.position.set(0, 0.95, 0.28);
       meshGroup.add(pouch);
 
-      // 3. Head & Helmet (y = 1.6)
-      const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-      const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
+      // 3. Head: low-poly icosahedron (not cubic)
+      const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
+      const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8, flatShading: true });
       const head = new THREE.Mesh(headGeo, headMat);
       head.position.y = 1.6;
       head.castShadow = true;
       meshGroup.add(head);
+
+      // Helmet shell
+      const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
+      const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
+      const helmet = new THREE.Mesh(helmetGeo, helmetMat);
+      helmet.position.set(0, 1.62, -0.02);
+      meshGroup.add(helmet);
 
       // Custom helmet features based on class
       if (botClass.id === 'assault') {
@@ -1536,10 +1689,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         meshGroup.add(eyeR);
       }
 
-      // 4. Arms (Pivotable around shoulder height y = 1.15)
-      const armGeo = new THREE.BoxGeometry(0.22, 0.65, 0.22);
-      const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(botClass.color), roughness: 0.8 });
-      
+      // 4. Arms: tapered cylinders (pivotable around shoulder height y = 1.15)
+      const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
+      const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(botClass.color), roughness: 0.8, flatShading: true });
+
+      // Shoulder pads
+      const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
+      const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+      const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
+      shoulderL.position.set(-0.48, 1.35, 0);
+      shoulderL.scale.set(1.2, 0.8, 1);
+      meshGroup.add(shoulderL);
+      const shoulderR = shoulderL.clone();
+      shoulderR.position.x = 0.48;
+      meshGroup.add(shoulderR);
+
       const leftArm = new THREE.Mesh(armGeo, armMat);
       leftArm.position.set(-0.52, 1.15, 0);
       leftArm.castShadow = true;
@@ -1561,7 +1725,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // Hitbox helper for headshots
       const botHeadBox = new THREE.Mesh(
-        new THREE.BoxGeometry(0.55, 0.55, 0.55),
+        new THREE.SphereGeometry(0.32, 4, 4),
         new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
       );
       botHeadBox.position.copy(head.position);

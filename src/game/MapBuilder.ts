@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createBrickTexture, createConcreteTexture, createGrassTexture, createSandTexture, createRustTexture } from './ProceduralTextures';
 
 export interface CollidableBox {
   box: THREE.Box3;
@@ -28,12 +29,24 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     type: 'wall' | 'crate' | 'ramp' = 'crate'
   ) => {
     const geo = new THREE.BoxGeometry(size[0], size[1], size[2]);
-    const mat = new THREE.MeshStandardMaterial({
+    const matProps: THREE.MeshStandardMaterialParameters = {
       color,
       roughness: 0.8,
       metalness: 0.2,
       flatShading: true,
-    });
+    };
+    // Walls get brick texture while keeping their color
+    if (type === 'wall') {
+      const brickTex = createBrickTexture(color);
+      brickTex.repeat.set(
+        Math.max(1, Math.round(size[0] / 4)),
+        Math.max(1, Math.round(size[1] / 2))
+      );
+      brickTex.wrapS = THREE.RepeatWrapping;
+      brickTex.wrapT = THREE.RepeatWrapping;
+      matProps.map = brickTex;
+    }
+    const mat = new THREE.MeshStandardMaterial(matProps);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(...pos);
     mesh.rotation.y = rotY;
@@ -59,13 +72,20 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     group.position.set(...pos);
     group.rotation.y = rotY;
 
-    const mat = new THREE.MeshStandardMaterial({
+    const matProps: THREE.MeshStandardMaterialParameters = {
       color,
       roughness: 0.7,
       metalness: 0.3,
       flatShading: true,
       side: THREE.DoubleSide
-    });
+    };
+    // Containers get a subtle corrugated metal/brick texture
+    const contTex = createBrickTexture(color, 0x4b5563, 48, 24, 3);
+    contTex.repeat.set(Math.max(1, Math.round(w / 4)), Math.max(1, Math.round(h / 3)));
+    contTex.wrapS = THREE.RepeatWrapping;
+    contTex.wrapT = THREE.RepeatWrapping;
+    matProps.map = contTex;
+    const mat = new THREE.MeshStandardMaterial(matProps);
 
     // Left Wall
     const leftMesh = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, l), mat);
@@ -117,7 +137,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     
     // Main asphalt road floor
     const roadGeo = new THREE.PlaneGeometry(floorWidth, floorDepth);
-    const roadMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.85 });
+    const roadTex = createConcreteTexture(0x334155, 1.0, 18);
+    roadTex.repeat.set(floorWidth / 8, floorDepth / 8);
+    const roadMat = new THREE.MeshStandardMaterial({ map: roadTex, color: 0x334155, roughness: 0.85 });
     const road = new THREE.Mesh(roadGeo, roadMat);
     road.rotation.x = -Math.PI / 2;
     road.receiveShadow = true;
@@ -125,7 +147,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
 
     // Green grass yards on West and East sides
     const yardGeo = new THREE.PlaneGeometry(45, 100);
-    const yardMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.9 });
+    const grassTex = createGrassTexture(0x15803d);
+    grassTex.repeat.set(8, 16);
+    const yardMat = new THREE.MeshStandardMaterial({ map: grassTex, color: 0x15803d, roughness: 0.9 });
     const yardW = new THREE.Mesh(yardGeo, yardMat);
     yardW.position.set(-42, 0.05, 0);
     yardW.rotation.x = -Math.PI / 2;
@@ -248,7 +272,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
 
     // Shipment Map Floor (80x80)
     const floorGeo = new THREE.PlaneGeometry(80, 80);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.9 });
+    const shipFloorTex = createConcreteTexture(0x334155, 1.0, 20);
+    shipFloorTex.repeat.set(20, 20);
+    const floorMat = new THREE.MeshStandardMaterial({ map: shipFloorTex, color: 0x334155, roughness: 0.9 });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
@@ -340,7 +366,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
 
     // Rust Desert Floor (110x110)
     const floorGeo = new THREE.PlaneGeometry(110, 110);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xc2410c, roughness: 0.95 });
+    const rustFloorTex = createRustTexture(0xc2410c);
+    rustFloorTex.repeat.set(28, 28);
+    const floorMat = new THREE.MeshStandardMaterial({ map: rustFloorTex, color: 0xc2410c, roughness: 0.95 });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
@@ -475,7 +503,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
 
     // Dust2 Floor (130x130)
     const floorGeo = new THREE.PlaneGeometry(130, 130);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xca8a04, roughness: 0.9 });
+    const sandFloorTex = createSandTexture(0xca8a04);
+    sandFloorTex.repeat.set(32, 32);
+    const floorMat = new THREE.MeshStandardMaterial({ map: sandFloorTex, color: 0xca8a04, roughness: 0.9 });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
