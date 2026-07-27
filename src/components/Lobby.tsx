@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { CLASSES, MAPS, BOT_NAMES, WEAPONS, CharacterClass, MatchConfig, LobbyPlayer, KeyBindings, TouchBindings, GraphicsQuality, GameMode, GAME_MODES, GAME_MODE_MAPS, TEAM_NAMES, TEAM_COLORS, getTeamConfig, isTeamMode } from '../types';
-import { Shield, Target, Users, Settings, Flame, Play, Volume2, VolumeX, Swords, Award, Smartphone, Globe } from 'lucide-react';
+import { Shield, Target, Users, Settings, Flame, Play, Volume2, VolumeX, Swords, Award, Smartphone, Globe, Zap } from 'lucide-react';
 import { sounds } from '../lib/sounds';
 import { KeybindingsEditor } from './KeybindingsEditor';
 import { ProfileModal } from './ProfileModal';
 import { AdminPanelModal } from './AdminPanelModal';
-import { auth, db } from '../lib/firebase';
+import { auth, db, defaultAuth, defaultDb } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
 interface LobbyProps {
@@ -21,6 +21,8 @@ interface LobbyProps {
   graphicsQuality: GraphicsQuality;
   onGraphicsQualityChange: (quality: GraphicsQuality) => void;
   user?: any;
+  backendMode?: 'default' | 'fast';
+  onSwitchBackend?: (mode: 'default' | 'fast') => void;
   onLogout?: () => void;
 }
 
@@ -37,6 +39,8 @@ export const Lobby: React.FC<LobbyProps> = ({
   graphicsQuality,
   onGraphicsQualityChange,
   user,
+  backendMode = 'default',
+  onSwitchBackend,
   onLogout
 }) => {
   // Config states
@@ -812,6 +816,46 @@ export const Lobby: React.FC<LobbyProps> = ({
                     >
                       + Generate New Code
                     </button>
+                  </div>
+
+                  {/* Server Backend Toggle: Default / Fast */}
+                  <div className="bg-slate-900 border border-slate-800 p-2 rounded-xl mb-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-mono font-bold text-slate-300">SERVER</span>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => onSwitchBackend?.('default')}
+                          className={`px-3 py-1 rounded-md text-[10px] font-bold font-mono transition-all ${
+                            backendMode === 'default'
+                              ? 'bg-slate-600 text-white'
+                              : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                          }`}
+                        >
+                          Default
+                        </button>
+                        <button
+                          onClick={() => onSwitchBackend?.('fast')}
+                          className={`px-3 py-1 rounded-md text-[10px] font-bold font-mono transition-all flex items-center gap-1 ${
+                            backendMode === 'fast'
+                              ? 'bg-cyan-600 text-white shadow-[0_0_8px_rgba(34,211,238,0.5)]'
+                              : 'bg-slate-800 text-slate-500 hover:text-cyan-300'
+                          }`}
+                        >
+                          <Zap className={`w-3 h-3 ${backendMode === 'fast' ? 'text-cyan-200' : ''}`} />
+                          Fast
+                        </button>
+                      </div>
+                    </div>
+                    {backendMode === 'fast' && (
+                      <p className="text-[9px] font-mono text-cyan-400/70 mt-1.5 flex items-center gap-1">
+                        <Zap className="w-2.5 h-2.5" /> Scream of Justice Servers — Realtime Database
+                      </p>
+                    )}
+                    {backendMode === 'default' && (
+                      <p className="text-[9px] font-mono text-slate-500 mt-1.5 flex items-center gap-1">
+                        <Globe className="w-2.5 h-2.5" /> CallOfBooty Servers — Firestore
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex justify-between items-center bg-slate-900 border border-slate-800 p-2 rounded-xl mb-2">

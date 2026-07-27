@@ -5,12 +5,14 @@ import { GameCanvas } from './components/GameCanvas';
 import { GameHUD } from './components/GameHUD';
 import { ScoreboardScreen } from './components/ScoreboardScreen';
 import { WelcomeScreen } from './components/WelcomeScreen';
-import { db } from './lib/firebase';
+import { db, getActiveBackend, defaultDb, fastDb } from './lib/firebase';
 import { doc, updateDoc, collection, addDoc, setDoc, getDoc } from 'firebase/firestore';
+import { ref as rtdbRef, update as rtdbUpdate, push as rtdbPush, set as rtdbSet, get as rtdbGet } from 'firebase/database';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [gameState, setGameState] = useState<GameState>('WELCOME');
+  const [backendMode, setBackendMode] = useState<'default' | 'fast'>('default');
   
   // Custom Keybindings
   const [bindings, setBindings] = useState<KeyBindings>(() => {
@@ -244,44 +246,74 @@ export default function App() {
           updatedAt: new Date().toISOString()
         };
 
-        const userRef = doc(db, 'users', user.uid);
-        await updateDoc(userRef, updateData);
-        
-        // Save Match History
-        try {
-          await addDoc(collection(db, 'match_history'), {
-            userId: user.uid,
-            mapId: matchConfig?.mapId || 'TUTORIAL_01',
-            isWin,
-            kills: playerStats.kills,
-            deaths: playerStats.deaths,
-            score: playerStats.score,
-            timestamp: new Date().toISOString()
-          });
-        } catch (historyErr) {
-          console.error("Failed to save match history", historyErr);
-        }
-
-        // Save Weapon Stats
-        if (playerStats.weaponKills && Object.keys(playerStats.weaponKills).length > 0) {
+        if (backendMode === 'fast') {
+          // Fast mode: Realtime Database
+          await rtdbUpdate(rtdbRef(fastDb, `users/${user.uid}`), updateData);
           try {
-            const weaponStatsRef = doc(db, 'weapon_stats', user.uid);
-            const weaponSnap = await getDoc(weaponStatsRef);
-            let currentWeapons: Record<string, any> = {};
-            if (weaponSnap.exists()) {
-              currentWeapons = weaponSnap.data() || {};
-            }
-            
-            for (const [wepId, wKills] of Object.entries(playerStats.weaponKills)) {
-              if (!currentWeapons[wepId]) {
-                currentWeapons[wepId] = { kills: 0 };
+            await rtdbPush(rtdbRef(fastDb, 'match_history'), {
+              userId: user.uid,
+              mapId: matchConfig?.mapId || 'TUTORIAL_01',
+              isWin,
+              kills: playerStats.kills,
+              deaths: playerStats.deaths,
+              score: playerStats.score,
+              timestamp: new Date().toISOString()
+            });
+          } catch (historyErr) {
+            console.error("Failed to save match history (RTDB)", historyErr);
+          }
+          if (playerStats.weaponKills && Object.keys(playerStats.weaponKills).length > 0) {
+            try {
+              const wSnap = await rtdbGet(rtdbRef(fastDb, `weapon_stats/${user.uid}`));
+              let currentWeapons: Record<string, any> = wSnap.exists() ? wSnap.val() : {};
+              for (const [wepId, wKills] of Object.entries(playerStats.weaponKills)) {
+                if (!currentWeapons[wepId]) currentWeapons[wepId] = { kills: 0 };
+                currentWeapons[wepId].kills += (wKills as number);
               }
-              currentWeapons[wepId].kills += (wKills as number);
+              await rtdbSet(rtdbRef(fastDb, `weapon_stats/${user.uid}`), currentWeapons);
+            } catch (wepErr) {
+              console.error("Failed to update weapon stats (RTDB)", wepErr);
             }
-            
-            await setDoc(weaponStatsRef, currentWeapons, { merge: true });
-          } catch (wepErr) {
-            console.error("Failed to update weapon stats", wepErr);
+          }
+        } else {
+          // Default mode: Firestore
+          const userRef = doc(defaultDb, 'users', user.uid);
+          await updateDoc(userRef, updateData);
+          
+          try {
+            await addDoc(collection(defaultDb, 'match_history'), {
+              userId: user.uid,
+              mapId: matchConfig?.mapId || 'TUTORIAL_01',
+              isWin,
+              kills: playerStats.kills,
+              deaths: playerStats.deaths,
+              score: playerStats.score,
+              timestamp: new Date().toISOString()
+            });
+          } catch (historyErr) {
+            console.error("Failed to save match history", historyErr);
+          }
+
+          if (playerStats.weaponKills && Object.keys(playerStats.weaponKills).length > 0) {
+            try {
+              const weaponStatsRef = doc(defaultDb, 'weapon_stats', user.uid);
+              const weaponSnap = await getDoc(weaponStatsRef);
+              let currentWeapons: Record<string, any> = {};
+              if (weaponSnap.exists()) {
+                currentWeapons = weaponSnap.data() || {};
+              }
+              
+              for (const [wepId, wKills] of Object.entries(playerStats.weaponKills)) {
+                if (!currentWeapons[wepId]) {
+                  currentWeapons[wepId] = { kills: 0 };
+                }
+                currentWeapons[wepId].kills += (wKills as number);
+              }
+              
+              await setDoc(weaponStatsRef, currentWeapons, { merge: true });
+            } catch (wepErr) {
+              console.error("Failed to update weapon stats", wepErr);
+            }
           }
         }
         
@@ -306,10 +338,21 @@ export default function App() {
     setGameState('LOBBY');
   };
 
+  const handleSwitchBackend = (mode: 'default' | 'fast') => {
+    if (mode === backendMode) return;
+    try {
+      const backend = getActiveBackend(backendMode);
+      backend.auth.signOut();
+    } catch (e) { /* ignore sign out errors */ }
+    setUser(null);
+    setBackendMode(mode);
+    setGameState('WELCOME');
+  };
+
   return (
     <div className="w-screen h-screen bg-slate-950 text-white overflow-hidden relative">
       {gameState === 'WELCOME' && (
-        <WelcomeScreen onLoginComplete={handleLoginComplete} />
+        <WelcomeScreen onLoginComplete={handleLoginComplete} backendMode={backendMode} />
       )}
 
       {gameState === 'LOBBY' && (
@@ -326,6 +369,8 @@ export default function App() {
           useTouchControls={useTouchControls}
           onToggleTouchControls={handleToggleTouchControls}
           user={user}
+          backendMode={backendMode}
+          onSwitchBackend={handleSwitchBackend}
           onLogout={() => {
             setUser(null);
             setGameState('WELCOME');
