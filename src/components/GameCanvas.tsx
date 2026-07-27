@@ -2831,6 +2831,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // 7. Core Match Timer Countdown Clock
     const timerInterval = setInterval(() => {
       if (config.isMultiplayer) return; // In multiplayer, match time is server-authoritative via time_sync
+      if (config.isCampaign) return; // Campaign missions don't end by timer
 
       game.matchTimeLeft--;
       onMatchTimerUpdate(game.matchTimeLeft);
