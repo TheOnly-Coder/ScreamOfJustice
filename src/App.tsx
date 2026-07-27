@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, CharacterClass, MatchConfig, MatchStats, KillFeedEntry, KeyBindings, DEFAULT_KEYBINDINGS, TouchBindings, DEFAULT_TOUCHBINDINGS, Weapon, GraphicsQuality, isTeamMode } from './types';
+import { GameState, CharacterClass, MatchConfig, MatchStats, KillFeedEntry, KeyBindings, DEFAULT_KEYBINDINGS, TouchBindings, DEFAULT_TOUCHBINDINGS, Weapon, GraphicsQuality, isTeamMode, CLASSES } from './types';
 import { Lobby } from './components/Lobby';
 import { GameCanvas } from './components/GameCanvas';
 import { GameHUD } from './components/GameHUD';
 import { ScoreboardScreen } from './components/ScoreboardScreen';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { MainMenu } from './components/MainMenu';
+import { CampaignGlobe } from './components/CampaignGlobe';
+import { ChapterSelect } from './components/ChapterSelect';
 import { db, getActiveBackend, defaultDb, fastDb } from './lib/firebase';
 import { doc, updateDoc, collection, addDoc, setDoc, getDoc } from 'firebase/firestore';
 import { ref as rtdbRef, update as rtdbUpdate, push as rtdbPush, set as rtdbSet, get as rtdbGet } from 'firebase/database';
@@ -343,6 +345,37 @@ export default function App() {
     setGameState('LOBBY');
   };
 
+  const handleCampaignMode = () => {
+    setGameState('CAMPAIGN_GLOBE');
+  };
+
+  const handleStartTutorialChapter = (_chapter: number) => {
+    // Chapter 1: Tutorial - load assault class on tutorial map, no bots
+    const assaultClass = CLASSES[0];
+    const tutorialConfig: MatchConfig = {
+      mapId: 'tutorial',
+      timeLimit: 600,
+      scoreLimit: 0,
+      botCount: 0,
+      difficulty: 'EASY',
+      gameMode: 'FFA',
+    };
+    setMatchConfig(tutorialConfig);
+    setPlayerClass(assaultClass);
+    setPlayerName(user?.username || 'Recruit_Soldier');
+    setGameMode('FFA');
+    setTeamScores([]);
+    setPlayerHealth(assaultClass.maxHealth);
+    setPlayerMaxHealth(assaultClass.maxHealth);
+    setPlayerClip(assaultClass.primaryWeapon.maxAmmo);
+    setPlayerReserve(assaultClass.primaryWeapon.maxAmmo * 3);
+    setMatchTimeLeft(600);
+    setAbilityCooldownLeft(0);
+    setKillFeed([]);
+    touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
+    setGameState('PLAYING');
+  };
+
   const handleSwitchBackend = (mode: 'default' | 'fast') => {
     if (mode === backendMode) return;
     try {
@@ -361,7 +394,21 @@ export default function App() {
       )}
 
       {gameState === 'MAIN_MENU' && (
-        <MainMenu onClassicMode={handleClassicMode} user={user} />
+        <MainMenu onClassicMode={handleClassicMode} onCampaignMode={handleCampaignMode} user={user} />
+      )}
+
+      {gameState === 'CAMPAIGN_GLOBE' && (
+        <CampaignGlobe
+          onBack={() => setGameState('MAIN_MENU')}
+          onSelectRegion={() => setGameState('CHAPTER_SELECT')}
+        />
+      )}
+
+      {gameState === 'CHAPTER_SELECT' && (
+        <ChapterSelect
+          onBack={() => setGameState('CAMPAIGN_GLOBE')}
+          onStartChapter={handleStartTutorialChapter}
+        />
       )}
 
       {gameState === 'LOBBY' && (

@@ -16,7 +16,7 @@ export interface MapData {
   fogDensity: number;
 }
 
-export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo'): MapData {
+export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo' | 'tutorial'): MapData {
   const colliders: CollidableBox[] = [];
   const spawnPoints: THREE.Vector3[] = [];
 
@@ -893,7 +893,7 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
       new THREE.Vector3(-25, 1.5, -80)    // North flank
     );
 
-  } else {
+  } else if (mapId === 'dust2') {
     // DUST2 (Desert Compound)
     ambientColor = '#fed7aa'; // Bright desert sunlight
     directionalColor = '#fffbeb';
@@ -991,6 +991,54 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
       new THREE.Vector3(-25, 1.5, -35),  // B Doors Flank
       new THREE.Vector3(30, 1.5, -45),   // A Long Ramp
       new THREE.Vector3(-40, 1.5, 35)    // Tunnels Entrance South
+    );
+  } else if (mapId === 'tutorial') {
+    ambientColor = '#e0e7ff';
+    directionalColor = '#ffffff';
+    fogColor = '#1e293b';
+    fogDensity = 0.015;
+
+    const roomW = 20, roomD = 20, wallH = 4, wallT = 0.5;
+    const floorY = 0;
+
+    // Floor
+    const floorGeo = new THREE.PlaneGeometry(roomW, roomD);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.9, flatShading: true });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = floorY;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // Ceiling
+    const ceil = new THREE.Mesh(floorGeo.clone(), new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.95, flatShading: true }));
+    ceil.rotation.x = Math.PI / 2;
+    ceil.position.y = wallH;
+    scene.add(ceil);
+
+    // North wall (z = -roomD/2)
+    createCrate([0, wallH / 2, -roomD / 2], [roomW, wallH, wallT], 0x64748b, 0, 'wall');
+    // South wall (z = +roomD/2)
+    createCrate([0, wallH / 2, roomD / 2], [roomW, wallH, wallT], 0x64748b, 0, 'wall');
+    // West wall (x = -roomW/2)
+    createCrate([-roomW / 2, wallH / 2, 0], [wallT, wallH, roomD], 0x64748b, 0, 'wall');
+    // East wall (x = +roomW/2)
+    createCrate([roomW / 2, wallH / 2, 0], [wallT, wallH, roomD], 0x64748b, 0, 'wall');
+
+    // Some interior crates for cover
+    createCrate([-4, 0.75, -3], [1.5, 1.5, 1.5], 0x78716c, 0, 'crate');
+    createCrate([3, 0.75, 2], [1.5, 1.5, 1.5], 0x78716c, 0, 'crate');
+    createCrate([0, 0.5, -6], [3, 1, 1], 0x78716c, 0, 'crate');
+    createCrate([-6, 0.75, 5], [1, 1.5, 2], 0x78716c, Math.PI / 6, 'crate');
+
+    // Simple overhead light
+    const light = new THREE.PointLight(0xffffff, 1.5, 30);
+    light.position.set(0, wallH - 0.5, 0);
+    light.castShadow = true;
+    scene.add(light);
+
+    spawnPoints.push(
+      new THREE.Vector3(0, 1.5, 0)
     );
   }
 

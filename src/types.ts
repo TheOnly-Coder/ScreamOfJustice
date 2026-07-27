@@ -1,4 +1,4 @@
-export type GameState = 'WELCOME' | 'MAIN_MENU' | 'LOBBY' | 'PLAYING' | 'POST_MATCH';
+export type GameState = 'WELCOME' | 'MAIN_MENU' | 'CAMPAIGN_GLOBE' | 'CHAPTER_SELECT' | 'LOBBY' | 'PLAYING' | 'POST_MATCH';
 export type GraphicsLevel = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10';
 export interface GraphicsQuality {
   level: GraphicsLevel;
@@ -114,7 +114,7 @@ export interface XpEvent {
 export type GameMode = 'FFA' | 'TEAMS_2v2' | 'TEAMS_4v4' | 'TEAMS_2v2v2';
 
 export interface MatchConfig {
-  mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo';
+  mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo' | 'tutorial';
   timeLimit: number; // in seconds
   scoreLimit: number; // kills to win (FFA) or team score limit (Teams)
   botCount: number;
