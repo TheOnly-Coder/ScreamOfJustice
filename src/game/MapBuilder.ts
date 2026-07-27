@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createBrickTexture, createConcreteTexture, createGrassTexture, createSandTexture, createRustTexture } from './ProceduralTextures';
+import { createBrickTexture, createBrickFaceMaterials, createContainerFaceMaterials, createBrickNormalMap, createConcreteTexture, createGrassTexture, createSandTexture, createRustTexture } from './ProceduralTextures';
 
 export interface CollidableBox {
   box: THREE.Box3;
@@ -21,6 +21,7 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
   const spawnPoints: THREE.Vector3[] = [];
 
   // Helper to create a solid collidable crate/wall box
+  // Uses per-face materials so brick textures tile correctly on each face
   const createCrate = (
     pos: [number, number, number],
     size: [number, number, number],
@@ -29,24 +30,20 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     type: 'wall' | 'crate' | 'ramp' = 'crate'
   ) => {
     const geo = new THREE.BoxGeometry(size[0], size[1], size[2]);
-    const matProps: THREE.MeshStandardMaterialParameters = {
-      color,
-      roughness: 0.8,
-      metalness: 0.2,
-      flatShading: true,
-    };
-    // Walls get brick texture while keeping their color
+    let mat: THREE.Material | THREE.Material[];
     if (type === 'wall') {
-      const brickTex = createBrickTexture(color);
-      brickTex.repeat.set(
-        Math.max(1, Math.round(size[0] / 4)),
-        Math.max(1, Math.round(size[1] / 2))
-      );
-      brickTex.wrapS = THREE.RepeatWrapping;
-      brickTex.wrapT = THREE.RepeatWrapping;
-      matProps.map = brickTex;
+      // Per-face materials: each face gets correct brick repeat for its dimensions
+      // BoxGeometry face order: +X, -X, +Y, -Y, +Z, -Z
+      // +X/-X are D wide x H tall, +Z/-Z are W wide x H tall, +Y/-Y are flat
+      mat = createBrickFaceMaterials(color, size[0], size[1], size[2]);
+    } else {
+      mat = new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.8,
+        metalness: 0.2,
+        flatShading: true,
+      });
     }
-    const mat = new THREE.MeshStandardMaterial(matProps);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(...pos);
     mesh.rotation.y = rotY;
@@ -72,37 +69,38 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     group.position.set(...pos);
     group.rotation.y = rotY;
 
-    const matProps: THREE.MeshStandardMaterialParameters = {
-      color,
-      roughness: 0.7,
-      metalness: 0.3,
-      flatShading: true,
-      side: THREE.DoubleSide
+    // Per-face materials for each sub-wall of the container
+    const makeSideMat = (faceW: number, faceH: number) => {
+      const tex = createBrickTexture(color, 0x4b5563, 48, 24, 3);
+      tex.repeat.set(Math.max(1, Math.round(faceW / 3)), Math.max(1, Math.round(faceH / 2)));
+      return new THREE.MeshStandardMaterial({
+        map: tex,
+        color,
+        roughness: 0.7,
+        metalness: 0.3,
+        side: THREE.DoubleSide,
+      });
     };
-    // Containers get a subtle corrugated metal/brick texture
-    const contTex = createBrickTexture(color, 0x4b5563, 48, 24, 3);
-    contTex.repeat.set(Math.max(1, Math.round(w / 4)), Math.max(1, Math.round(h / 3)));
-    contTex.wrapS = THREE.RepeatWrapping;
-    contTex.wrapT = THREE.RepeatWrapping;
-    matProps.map = contTex;
-    const mat = new THREE.MeshStandardMaterial(matProps);
 
-    // Left Wall
-    const leftMesh = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, l), mat);
+    // Left Wall (wallThick wide x h tall x l deep)
+    const leftMats = createContainerFaceMaterials(color, wallThick, h, l);
+    const leftMesh = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, l), leftMats);
     leftMesh.position.set(-w / 2 + wallThick / 2, 0, 0);
     leftMesh.castShadow = true;
     leftMesh.receiveShadow = true;
     group.add(leftMesh);
 
     // Right Wall
-    const rightMesh = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, l), mat);
+    const rightMats = createContainerFaceMaterials(color, wallThick, h, l);
+    const rightMesh = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, l), rightMats);
     rightMesh.position.set(w / 2 - wallThick / 2, 0, 0);
     rightMesh.castShadow = true;
     rightMesh.receiveShadow = true;
     group.add(rightMesh);
 
     // Roof
-    const roofMesh = new THREE.Mesh(new THREE.BoxGeometry(w, wallThick, l), mat);
+    const roofMats = createContainerFaceMaterials(color, w, wallThick, l);
+    const roofMesh = new THREE.Mesh(new THREE.BoxGeometry(w, wallThick, l), roofMats);
     roofMesh.position.set(0, h / 2 - wallThick / 2, 0);
     roofMesh.castShadow = true;
     roofMesh.receiveShadow = true;
@@ -116,6 +114,120 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
       { box: new THREE.Box3().setFromObject(rightMesh), mesh: rightMesh, type: 'crate' },
       { box: new THREE.Box3().setFromObject(roofMesh), mesh: roofMesh, type: 'crate' }
     );
+
+    return group;
+  };
+
+  // ============================================================
+  // createDetailedBuilding: multi-part building with windows,
+  // ledges, and cornices for realistic architecture.
+  // Each sub-wall gets per-face materials so textures tile correctly.
+  // ============================================================
+  const createDetailedBuilding = (
+    pos: [number, number, number],
+    size: [number, number, number], // [width, height, depth]
+    color: number,
+    opts?: {
+      rotY?: number;
+      windowRows?: number;
+      windowCols?: number;
+      windowColor?: number;
+      ledgeSize?: number;
+      corniceSize?: number;
+    }
+  ) => {
+    const [w, h, d] = size;
+    const rotY = opts?.rotY ?? 0;
+    const windowRows = opts?.windowRows ?? 2;
+    const windowCols = opts?.windowCols ?? 3;
+    const windowColor = opts?.windowColor ?? 0x1e293b;
+    const ledgeSize = opts?.ledgeSize ?? 0.3;
+    const corniceSize = opts?.corniceSize ?? 0.5;
+    const group = new THREE.Group();
+    group.position.set(...pos);
+    group.rotation.y = rotY;
+
+    const addPart = (
+      localPos: [number, number, number],
+      partSize: [number, number, number],
+      partColor: number,
+      isWall = false
+    ) => {
+      const geo = new THREE.BoxGeometry(partSize[0], partSize[1], partSize[2]);
+      let mat: THREE.Material | THREE.Material[];
+      if (isWall) {
+        mat = createBrickFaceMaterials(partColor, partSize[0], partSize[1], partSize[2]);
+      } else {
+        mat = new THREE.MeshStandardMaterial({
+          color: partColor,
+          roughness: 0.7,
+          metalness: isWall ? 0.15 : 0.4,
+          flatShading: !isWall,
+        });
+      }
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(...localPos);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
+    };
+
+    // Main body (slightly smaller than outer bounds to leave room for ledges)
+    const inset = 0.15;
+    addPart([0, 0, 0], [w - inset * 2, h, d - inset * 2], color, true);
+
+    // Bottom ledge / foundation
+    if (ledgeSize > 0) {
+      addPart([0, -h / 2 + ledgeSize / 2, 0], [w + 0.2, ledgeSize, d + 0.2], 0x374151);
+    }
+
+    // Top cornice / ledge
+    if (corniceSize > 0) {
+      addPart([0, h / 2 - corniceSize / 2, 0], [w + 0.2, corniceSize, d + 0.2], 0x475569);
+    }
+
+    // Windows on front face (+Z side)
+    const winW = (w * 0.6) / windowCols;
+    const winH = (h * 0.35) / windowRows;
+    const winD = 0.3;
+    const startX = -(windowCols - 1) * (winW + 0.8) / 2;
+    const startY = h * 0.15;
+
+    for (let row = 0; row < windowRows; row++) {
+      for (let col = 0; col < windowCols; col++) {
+        const wx = startX + col * (winW + 0.8);
+        const wy = startY + row * (winH + 1.5);
+        if (wy + winH / 2 < h - corniceSize - 0.5) {
+          // Window recess (dark inset)
+          addPart([wx, wy, d / 2 - 0.1], [winW, winH, winD], windowColor);
+          // Window sill (small ledge below window)
+          addPart([wx, wy - winH / 2 - 0.15, d / 2], [winW + 0.3, 0.15, 0.4], 0x475569);
+          // Window lintel (small ledge above window)
+          addPart([wx, wy + winH / 2 + 0.1, d / 2], [winW + 0.2, 0.15, 0.3], 0x475569);
+        }
+      }
+    }
+
+    // Windows on back face (-Z side)
+    for (let row = 0; row < windowRows; row++) {
+      for (let col = 0; col < windowCols; col++) {
+        const wx = startX + col * (winW + 0.8);
+        const wy = startY + row * (winH + 1.5);
+        if (wy + winH / 2 < h - corniceSize - 0.5) {
+          addPart([wx, wy, -d / 2 + 0.1], [winW, winH, winD], windowColor);
+          addPart([wx, wy - winH / 2 - 0.15, -d / 2], [winW + 0.3, 0.15, 0.4], 0x475569);
+          addPart([wx, wy + winH / 2 + 0.1, -d / 2], [winW + 0.2, 0.15, 0.3], 0x475569);
+        }
+      }
+    }
+
+    scene.add(group);
+
+    // Use the main body mesh for the collider
+    const mainMesh = group.children[0] as THREE.Mesh;
+    const box = new THREE.Box3().setFromObject(group);
+    colliders.push({ box, mesh: mainMesh, type: 'wall' });
 
     return group;
   };
@@ -219,8 +331,10 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
       createCrate([x - sign * 13.25, h + 0.5, 7], [6, 1.5, 0.5], 0x451a03);
       createCrate([x - sign * 13.25, h + 0.5, -7], [6, 1.5, 0.5], 0x451a03);
 
-      // Garage
-      createCrate([x, 3, -20], [18, 6, 12], color1);
+      // Garage — detailed building with windows
+      createDetailedBuilding([x, 3, -20], [18, 6, 12], color1, {
+        windowRows: 1, windowCols: 3, windowColor: 0x0f172a
+      });
     };
 
     // West House (Green) & East House (Yellow)
@@ -302,22 +416,22 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     // North-West Cluster
     createOpenContainer([-20, 3, -20], [6, 6, 16], 0x16a34a, Math.PI / 4); // Green open container
     createCrate([-22, 9, -20], [6, 6, 14], 0x4f46e5, Math.PI / 4 + 0.1);  // Stacked purple container
-    createCrate([-32, 3, -32], [10, 6, 10], 0x475569);                   // NW Storage vault
+    createDetailedBuilding([-32, 3, -32], [10, 6, 10], 0x475569, { windowRows: 1, windowCols: 2 }); // NW Storage vault
 
     // North-East Cluster
     createOpenContainer([20, 3, -20], [6, 6, 16], 0x2563eb, -Math.PI / 4); // Blue open container
     createCrate([22, 9, -20], [6, 6, 14], 0xd97706, -Math.PI / 4 - 0.1);  // Stacked orange container
-    createCrate([32, 3, -32], [10, 6, 10], 0x475569);                    // NE Storage vault
+    createDetailedBuilding([32, 3, -32], [10, 6, 10], 0x475569, { windowRows: 1, windowCols: 2 });  // NE Storage vault
 
     // South-West Cluster
     createOpenContainer([-20, 3, 20], [6, 6, 16], 0xd97706, -Math.PI / 4); // Orange open container
     createCrate([-22, 9, 20], [6, 6, 14], 0x16a34a, -Math.PI / 4 + 0.1);   // Stacked green container
-    createCrate([-32, 3, 32], [10, 6, 10], 0x475569);                    // SW Storage vault
+    createDetailedBuilding([-32, 3, 32], [10, 6, 10], 0x475569, { windowRows: 1, windowCols: 2 });  // SW Storage vault
 
     // South-East Cluster
     createOpenContainer([20, 3, 20], [6, 6, 16], 0xdc2626, Math.PI / 4);  // Red open container
     createCrate([22, 9, 20], [6, 6, 14], 0x2563eb, Math.PI / 4 - 0.1);    // Stacked blue container
-    createCrate([32, 3, 32], [10, 6, 10], 0x475569);                     // SE Storage vault
+    createDetailedBuilding([32, 3, 32], [10, 6, 10], 0x475569, { windowRows: 1, windowCols: 2 });   // SE Storage vault
 
     // --- COVER & OBSTACLES (Forklifts, Wooden Crates, Sandbag Bunkers, Barrels) ---
     // Wooden Crate stacks
@@ -585,7 +699,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
         createCrate([stepX, stepY, z], [stepDepth, stepHeight, 8], 0x475569);
       }
       // Garage
-      createCrate([x, 3, z - 20], [18, 6, 12], color1);
+      createDetailedBuilding([x, 3, z - 20], [18, 6, 12], color1, {
+        windowRows: 1, windowCols: 3, windowColor: 0x0f172a
+      });
     };
 
     // Position args: x, z, color1, color2, sign (which side door is on)
@@ -616,19 +732,19 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     // Corner clusters
     createOpenContainer([45, 3, -20], [6, 6, 16], 0x16a34a, Math.PI / 4);
     createCrate([43, 9, -20], [6, 6, 14], 0x4f46e5, Math.PI / 4 + 0.1);
-    createCrate([33, 3, -32], [10, 6, 10], 0x475569);
+    createDetailedBuilding([33, 3, -32], [10, 6, 10], 0x475569, { windowRows: 1, windowCols: 2 });
 
     createOpenContainer([85, 3, -20], [6, 6, 16], 0x2563eb, -Math.PI / 4);
     createCrate([87, 9, -20], [6, 6, 14], 0xd97706, -Math.PI / 4 - 0.1);
-    createCrate([97, 3, -32], [10, 6, 10], 0x475569);
+    createDetailedBuilding([97, 3, -32], [10, 6, 10], 0x475569, { windowRows: 1, windowCols: 2 });
 
     createOpenContainer([45, 3, 20], [6, 6, 16], 0xd97706, -Math.PI / 4);
     createCrate([43, 9, 20], [6, 6, 14], 0x16a34a, -Math.PI / 4 + 0.1);
-    createCrate([33, 3, 32], [10, 6, 10], 0x475569);
+    createDetailedBuilding([33, 3, 32], [10, 6, 10], 0x475569, { windowRows: 1, windowCols: 2 });
 
     createOpenContainer([85, 3, 20], [6, 6, 16], 0xdc2626, Math.PI / 4);
     createCrate([87, 9, 20], [6, 6, 14], 0x2563eb, Math.PI / 4 - 0.1);
-    createCrate([97, 3, 32], [10, 6, 10], 0x475569);
+    createDetailedBuilding([97, 3, 32], [10, 6, 10], 0x475569, { windowRows: 1, windowCols: 2 });
 
     // Cover crates & sandbags
     createCrate([53, 1.5, 12], [3, 3, 3], 0x78350f);
@@ -687,11 +803,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     createCrate([10, 10, -75], [1, 1, 10], 0x78350f, 0.3);
     createCrate([10, 10, -85], [1, 1, 10], 0x78350f, -0.3);
 
-    // Bunker complex (south area)
-    createCrate([-30, 2.5, 70], [16, 5, 12], 0x451a03);
-    createCrate([-30, 5.5, 70], [18, 1, 14], 0x374151);
-    createCrate([30, 2.5, 70], [16, 5, 12], 0x451a03);
-    createCrate([30, 5.5, 70], [18, 1, 14], 0x374151);
+    // Bunker complex (south area) — detailed buildings
+    createDetailedBuilding([-30, 2.5, 70], [16, 5, 12], 0x451a03, { windowRows: 1, windowCols: 3, windowColor: 0x1e293b });
+    createDetailedBuilding([30, 2.5, 70], [16, 5, 12], 0x451a03, { windowRows: 1, windowCols: 3, windowColor: 0x1e293b });
     // Bunker connecting wall
     createCrate([0, 2.5, 70], [16, 5, 2], 0x451a03);
 
@@ -720,11 +834,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     silo2.updateMatrixWorld(true);
     colliders.push({ box: new THREE.Box3().setFromObject(silo2), mesh: silo2 as any, type: 'crate' });
 
-    // Supply depot (west side)
-    createCrate([-110, 2.5, 40], [14, 5, 10], 0x78350f);
-    createCrate([-110, 5.5, 40], [16, 1, 12], 0x374151);
-    createCrate([-110, 2.5, 55], [10, 5, 10], 0x78350f);
-    createCrate([-110, 5.5, 55], [12, 1, 12], 0x374151);
+    // Supply depot (west side) — detailed buildings
+    createDetailedBuilding([-110, 2.5, 40], [14, 5, 10], 0x78350f, { windowRows: 1, windowCols: 3, windowColor: 0x1e293b });
+    createDetailedBuilding([-110, 2.5, 55], [10, 5, 10], 0x78350f, { windowRows: 1, windowCols: 2, windowColor: 0x1e293b });
 
     // Scattered cover between zones
     createCrate([-20, 1.5, 40], [4, 3, 4], 0xb45309);
@@ -838,14 +950,14 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     createCrate([18, 3, -15], [16, 6, 6], 0x854d0e);
 
     // --- TUNNELS (South-West Upper & Lower Tunnels) ---
-    // Upper Tunnel Enclosure Walls
-    createCrate([-38, 5, 20], [16, 10, 30], 0x713f12);
+    // Upper Tunnel Enclosure — detailed building
+    createDetailedBuilding([-38, 5, 20], [16, 10, 30], 0x713f12, { windowRows: 2, windowCols: 3, windowColor: 0x1e293b });
     // Lower Tunnel Exit Wall
     createCrate([-20, 4, 15], [12, 8, 4], 0x713f12);
 
     // --- T SPAWN & CT SPAWN ---
-    // T Spawn Back Wall & Ramp (South)
-    createCrate([0, 4, 48], [40, 8, 12], 0x854d0e);
+    // T Spawn Back Wall — detailed building
+    createDetailedBuilding([0, 4, 48], [40, 8, 12], 0x854d0e, { windowRows: 2, windowCols: 5, windowColor: 0x1e293b });
     // CT Spawn Ramp & Barrier (North)
     createCrate([0, 3, -48], [36, 6, 10], 0x854d0e);
 
