@@ -24,6 +24,7 @@ interface LobbyProps {
   backendMode?: 'default' | 'fast';
   onSwitchBackend?: (mode: 'default' | 'fast') => void;
   onLogout?: () => void;
+  onBack?: () => void;
 }
 
 export const Lobby: React.FC<LobbyProps> = ({
@@ -41,7 +42,8 @@ export const Lobby: React.FC<LobbyProps> = ({
   user,
   backendMode = 'default',
   onSwitchBackend,
-  onLogout
+  onLogout,
+  onBack
 }) => {
   // Config states
   const [playerName, setPlayerName] = useState(user?.username || 'Recruit_Soldier');
@@ -331,6 +333,14 @@ export const Lobby: React.FC<LobbyProps> = ({
       {/* HEADER BAR */}
       <header id="lobby-header" className="w-full max-w-7xl mx-auto px-6 py-5 flex justify-between items-center border-b border-slate-900">
         <div className="flex items-center gap-3">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="mr-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 hover:bg-slate-800 hover:border-emerald-500/50 text-slate-400 hover:text-emerald-400 transition-all duration-200 text-sm font-mono flex items-center gap-1.5"
+            >
+              &#8592; Back
+            </button>
+          )}
           <div className="p-3 bg-emerald-500/10 border-2 border-emerald-500/20 rounded-2xl">
             <Swords className="w-6 h-6 text-emerald-400" />
           </div>

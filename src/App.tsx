@@ -384,6 +384,7 @@ export default function App() {
             setUser(null);
             setGameState('WELCOME');
           }}
+          onBack={() => setGameState('MAIN_MENU')}
         />
       )}
 
