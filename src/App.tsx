@@ -5,6 +5,7 @@ import { GameCanvas } from './components/GameCanvas';
 import { GameHUD } from './components/GameHUD';
 import { ScoreboardScreen } from './components/ScoreboardScreen';
 import { WelcomeScreen } from './components/WelcomeScreen';
+import { MainMenu } from './components/MainMenu';
 import { db, getActiveBackend, defaultDb, fastDb } from './lib/firebase';
 import { doc, updateDoc, collection, addDoc, setDoc, getDoc } from 'firebase/firestore';
 import { ref as rtdbRef, update as rtdbUpdate, push as rtdbPush, set as rtdbSet, get as rtdbGet } from 'firebase/database';
@@ -326,7 +327,7 @@ export default function App() {
   };
 
   const handleQuitGame = () => {
-    setGameState('LOBBY');
+    setGameState('MAIN_MENU');
   };
 
   const handleToggleMute = () => {
@@ -335,6 +336,10 @@ export default function App() {
 
   const handleLoginComplete = (userData: any) => {
     setUser(userData);
+    setGameState('MAIN_MENU');
+  };
+
+  const handleClassicMode = () => {
     setGameState('LOBBY');
   };
 
@@ -353,6 +358,10 @@ export default function App() {
     <div className="w-screen h-screen bg-slate-950 text-white overflow-hidden relative">
       {gameState === 'WELCOME' && (
         <WelcomeScreen onLoginComplete={handleLoginComplete} backendMode={backendMode} />
+      )}
+
+      {gameState === 'MAIN_MENU' && (
+        <MainMenu onClassicMode={handleClassicMode} user={user} />
       )}
 
       {gameState === 'LOBBY' && (
@@ -445,7 +454,7 @@ export default function App() {
         <ScoreboardScreen
           stats={stats}
           playerName={playerName}
-          onRestart={() => setGameState('LOBBY')}
+          onRestart={() => setGameState('MAIN_MENU')}
           gameMode={gameMode}
           playerTeamId={matchConfig?.playerTeamId}
           teamScores={teamScores}
