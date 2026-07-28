@@ -2082,13 +2082,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const handleWindowMouseMove = (e: MouseEvent) => {
       if (game.playerIsDead) return;
 
+      // Tutorial: detect any mouse movement regardless of pointer lock method
+      if (config.isCampaign && config.mapId === 'tutorial') {
+        if (Math.abs(e.movementX) > 0 || Math.abs(e.movementY) > 0 || Math.abs(e.clientX - (lastMouseX || e.clientX)) > 0 || Math.abs(e.clientY - (lastMouseY || e.clientY)) > 0) {
+          game.tutMouseMoved = true;
+        }
+      }
+
       const sens = parseFloat(localStorage.getItem('codm_camera_sens') || '1.0');
       const adsMult = parseFloat(localStorage.getItem('codm_ads_sens') || '0.5');
       const currentSensMult = (game.isADS ? adsMult : 1.0) * sens;
 
       if (document.pointerLockElement === canvasRef.current) {
         // Pointer Locked Movement
-        game.tutMouseMoved = true;
         let sensitivity = 0.0016 * currentSensMult;
 
         // COD-style aim assist friction: slow down mouse near targets
