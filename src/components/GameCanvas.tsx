@@ -644,6 +644,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutAimed: boolean;
     tutTarget: THREE.Group | null;
     tutGunSpawned: boolean;
+    tutMouseMoved: boolean;
 
     wantsToFire: boolean;
 
@@ -738,6 +739,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutAimed: false,
     tutTarget: null,
     tutGunSpawned: false,
+    tutMouseMoved: false,
     wantsToFire: false,
     matchTimeLeft: config.timeLimit,
     scoreLimit: config.scoreLimit,
@@ -2086,6 +2088,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       if (document.pointerLockElement === canvasRef.current) {
         // Pointer Locked Movement
+        game.tutMouseMoved = true;
         let sensitivity = 0.0016 * currentSensMult;
 
         // COD-style aim assist friction: slow down mouse near targets
@@ -2415,7 +2418,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // If the overlay is active, don't allow shooting
       if (!document.pointerLockElement && document.getElementById('pointer-lock-overlay')) return;
 
-      if (e.button === 0 && !game.playerIsDead) { // Left Click - Fire
+      if (e.button === 0 && !game.playerIsDead && game.hasWeapon) { // Left Click - Fire
         game.wantsToFire = true;
         game.isFiring = true;
       } else if (e.button === 2 && !game.playerIsDead) { // Right Click - ADS zoom
@@ -4663,7 +4666,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Stage 1: Look around (aim detection)
         if (game.tutStage === 1 && !game.tutActionDone) {
-          if (Math.abs(game.yaw) > 0.05 || Math.abs(game.pitch) > 0.03 || game.isADS) {
+          if (game.tutMouseMoved) {
             game.tutActionDone = true;
             sounds.playTutComplete();
             game.tutStage = 2;
