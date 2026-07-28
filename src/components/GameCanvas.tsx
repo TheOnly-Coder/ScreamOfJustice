@@ -653,6 +653,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutReloadStageDone: boolean;
     tutAmmoPickedUp: boolean;
     tutEndTimer: number | null;
+    tutStage7ReserveAtEnter: number;
 
     wantsToFire: boolean;
 
@@ -755,6 +756,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutReloadStageDone: false,
     tutAmmoPickedUp: false,
     tutEndTimer: null,
+    tutStage7ReserveAtEnter: 0,
     wantsToFire: false,
     matchTimeLeft: config.timeLimit,
     scoreLimit: config.scoreLimit,
@@ -2888,7 +2890,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         sounds.playKill();
         if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 6 && bot.isTutorialDummy) {
           game.tutStage = 7;
-          game.tutText = 'Enemy down! Killing enemies awards bonus ammo. Press R to reload, then walk over the green ammo pack to pick it up.';
+          game.tutText = 'Enemy down! Killing enemies awards bonus ammo. Press R to reload, then walk over the golden ammo pack to pick it up.';
           game.tutCharIdx = 0;
           game.tutActionDone = false;
           sounds.playTutComplete();
@@ -4675,7 +4677,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           'Press Q to drop your weapon, then press E to pick it back up.',
           'Press R to reload your weapon. Watch your ammo count replenish.',
           'A target dummy has appeared. Shoot it and watch your ammo count — killing enemies awards bonus reserve ammo.',
-          'Enemy down! Killing enemies awards bonus ammo. Press R to reload, then walk over the green ammo pack to pick it up.',
+          'Enemy down! Killing enemies awards bonus ammo. Press R to reload, then walk over the golden ammo pack to pick it up.',
           'Outstanding, Recruit. You have completed basic training. You are ready for combat, soldier.',
         ];
 
@@ -4754,7 +4756,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Stage 6: Shoot the enemy (handled in damageBot on kill)
 
-        // Stage 7: Reload + pick up ammo pack (handled in startReload and ammo pickup)
+        // Stage 7: Reload + pick up ammo — detect ammo increase
+        if (game.tutStage === 7 && !game.tutActionDone) {
+          if (!game.tutAmmoPickedUp) {
+            game.tutAmmoPickedUp = true;
+            game.tutEndTimer = null;
+            game.tutStage7ReserveAtEnter = game.playerReserve;
+          }
+          // Advance if reserve ammo increased (from ammo pack pickup or kill award)
+          if (game.playerReserve > (game.tutStage7ReserveAtEnter ?? 0)) {
+            game.tutStage = 8;
+            game.tutText = 'Outstanding, Recruit. You have completed basic training. You are ready for combat, soldier.';
+            game.tutCharIdx = 0;
+            game.tutActionDone = false;
+            game.tutEndTimer = null;
+            sounds.playTutComplete();
+          }
+        }
 
         // Stage 8: End — auto-advance 1s after typewriter finishes
         if (game.tutStage === 8 && !game.tutActionDone) {
