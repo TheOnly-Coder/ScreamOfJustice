@@ -434,6 +434,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tutTextRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   // States
@@ -634,6 +635,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     weaponGroup: THREE.Group | null;
     weaponMesh: THREE.Mesh | null;
     
+    // Tutorial system
+    tutStage: number;
+    tutText: string;
+    tutCharIdx: number;
+    tutLastCharTime: number;
+    tutActionDone: boolean;
+    tutAimed: boolean;
+    tutTarget: THREE.Group | null;
+    tutGunSpawned: boolean;
+
     wantsToFire: boolean;
 
     // Match Timer
@@ -719,6 +730,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     bunnyHopConsecutiveJumps: 0,
     weaponGroup: null,
     weaponMesh: null,
+    tutStage: 0,
+    tutText: '',
+    tutCharIdx: 0,
+    tutLastCharTime: 0,
+    tutActionDone: false,
+    tutAimed: false,
+    tutTarget: null,
+    tutGunSpawned: false,
     wantsToFire: false,
     matchTimeLeft: config.timeLimit,
     scoreLimit: config.scoreLimit,
@@ -1566,7 +1585,76 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     onPlayerHealthUpdate(game.playerHealth, game.playerMaxHealth);
     onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
 
-    // 3. Rig Weapon Group to Camera (First Person Gun model)
+        // ===== TUTORIAL SYSTEM =====
+    if (config.isCampaign && config.mapId === 'tutorial') {
+      game.hasWeapon = false;
+      game.tutStage = 0;
+      game.tutText = 'Welcome, Recruit. Use W A S D to move around the room.';
+      game.tutCharIdx = 0;
+      game.tutLastCharTime = performance.now();
+      // Spawn gun on crate at [3, 1.6, 2]
+      const gGrp = new THREE.Group();
+      const gMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.5, metalness: 0.6 });
+      const dMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5, metalness: 0.7 });
+      const bdy = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.5), gMat);
+      bdy.rotation.x = -Math.PI / 2; bdy.castShadow = true; gGrp.add(bdy);
+      const brl = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.15, 6), dMat);
+      brl.rotation.x = Math.PI / 2; brl.position.set(0, 0.03, -0.25); brl.castShadow = true; gGrp.add(brl);
+      const mg = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.08, 0.02), dMat);
+      mg.position.set(0, -0.05, 0.05); mg.castShadow = true; gGrp.add(mg);
+      const stk = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.05, 0.12), gMat);
+      stk.position.set(0, -0.01, 0.25); stk.castShadow = true; gGrp.add(stk);
+      // Glow ring
+      const glowRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.4, 0.55, 32),
+        new THREE.MeshBasicMaterial({ color: 0x22c55e, side: THREE.DoubleSide, transparent: true, opacity: 0.4 })
+      );
+      glowRing.rotation.x = -Math.PI / 2; glowRing.position.y = 0.05; gGrp.add(glowRing);
+      // [E] Pick Up label
+      const labelCanvas = document.createElement('canvas');
+      labelCanvas.width = 256; labelCanvas.height = 64;
+      const lctx = labelCanvas.getContext('2d')!;
+      lctx.fillStyle = 'rgba(0,0,0,0.6)';
+      lctx.fillRect(20, 8, 216, 48);
+      lctx.strokeStyle = '#22c55e'; lctx.lineWidth = 2;
+      lctx.strokeRect(20, 8, 216, 48);
+      lctx.font = 'bold 28px monospace'; lctx.fillStyle = '#22c55e';
+      lctx.textAlign = 'center'; lctx.fillText('[E] Pick Up', 128, 42);
+      const labelTex = new THREE.CanvasTexture(labelCanvas);
+      const labelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTex, transparent: true, depthTest: false }));
+      labelSprite.position.y = 0.35; labelSprite.scale.set(1.2, 0.3, 1); gGrp.add(labelSprite);
+      gGrp.position.set(3, 1.6, 2);
+      scene.add(gGrp);
+      game.groundWeapons.push({ mesh: gGrp, weapon: playerClass.primaryWeapon, isPrimary: true, ammoClip: playerClass.primaryWeapon.maxAmmo, ammoReserve: playerClass.primaryWeapon.maxAmmo * 3 });
+      game.tutGunSpawned = true;
+      // Create hidden target
+      const tgtGrp = new THREE.Group();
+      const tgtBody = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.6, 0.6, 0.06, 32),
+        new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff0000, emissiveIntensity: 0.3, roughness: 0.4 })
+      );
+      tgtBody.rotation.x = -Math.PI / 2; tgtGrp.add(tgtBody);
+      const tgtInner = new THREE.Mesh(
+        new THREE.RingGeometry(0.3, 0.42, 32),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.5, side: THREE.DoubleSide })
+      );
+      tgtInner.rotation.x = -Math.PI / 2; tgtInner.position.y = 0.04; tgtGrp.add(tgtInner);
+      const tgtCenter = new THREE.Mesh(
+        new THREE.CircleGeometry(0.15, 32),
+        new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 0.8, side: THREE.DoubleSide })
+      );
+      tgtCenter.rotation.x = -Math.PI / 2; tgtCenter.position.y = 0.05; tgtGrp.add(tgtCenter);
+      tgtGrp.position.set(0, 2.0, -8.5);
+      tgtGrp.visible = false;
+      scene.add(tgtGrp);
+      game.tutTarget = tgtGrp;
+      // Create weapon group (hidden until pickup)
+      const weaponGroup = new THREE.Group();
+      scene.add(weaponGroup);
+      game.weaponGroup = weaponGroup;
+      weaponGroup.visible = false;
+    } else {
+// 3. Rig Weapon Group to Camera (First Person Gun model)
     const weaponGroup = new THREE.Group();
     scene.add(weaponGroup);
     game.weaponGroup = weaponGroup;
@@ -1588,6 +1676,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       buildHighQualityFirstPersonWeapon(game, weaponGroup, playerClass);
     };
     buildFirstPersonWeapon();
+    }
 
     // Setup muzzle flash visuals
     const flashGeo = new THREE.SphereGeometry(0.08, 4, 4);
@@ -2168,6 +2257,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (game.weaponGroup) game.weaponGroup.visible = false;
           if (game.slideMesh) { game.scene.remove(game.slideMesh); game.slideMesh = null; }
           if (game.slashMesh) { game.scene.remove(game.slashMesh); game.slashMesh = null; }
+          // Tutorial: stage 4 - dropped weapon, now need to pick it back up
+          if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 4) {
+            game.tutActionDone = false;
+          }
         }
       }
 
@@ -2202,9 +2295,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           onWeaponChange(game.activeWeapon);
           onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
           sounds.playReload();
-          buildFirstPersonWeapon();
-          if (game.weaponGroup) game.weaponGroup.visible = true;
+          // Build weapon model (works in tutorial mode too)
+          if (game.weaponGroup) {
+            while (game.weaponGroup.children.length > 0) {
+              game.weaponGroup.remove(game.weaponGroup.children[0]);
+            }
+            buildHighQualityFirstPersonWeapon(game, game.weaponGroup, playerClass);
+            game.weaponGroup.visible = true;
+          }
           pickedUpWeapon = true;
+          // Tutorial: advance from stage 2 (pickup) to stage 3 (shoot target)
+          if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 4) {
+            game.tutStage = 5;
+            game.tutText = 'Training complete. You are ready for combat, soldier.';
+            game.tutCharIdx = 0;
+            game.tutActionDone = true;
+            sounds.playTutComplete();
+          } else if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 2) {
+            game.tutStage = 3;
+            game.tutText = 'Weapon acquired. A target has appeared on the wall. Aim and LEFT CLICK to shoot it.';
+            game.tutCharIdx = 0;
+            game.tutActionDone = false;
+            if (game.tutTarget) game.tutTarget.visible = true;
+            sounds.playTutComplete();
+          }
         }
       }
 
@@ -2488,6 +2602,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       if (intersects.length > 0 && intersects[0].distance <= game.activeWeapon.range) {
         let hit = intersects[0];
+        // Tutorial: check if player shot the tutorial target
+        if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 3 && game.tutTarget && game.tutTarget.visible) {
+          const tutRay = new THREE.Raycaster();
+          tutRay.setFromCamera(new THREE.Vector2(0, 0), camera);
+          const tutHits = tutRay.intersectObject(game.tutTarget, true);
+          if (tutHits.length > 0) {
+            game.tutStage = 4;
+            game.tutText = 'Press Q to drop your weapon, then press E to pick it back up.';
+            game.tutCharIdx = 0;
+            game.tutActionDone = false;
+            game.tutTarget.visible = false;
+            sounds.playTutComplete();
+          }
+        }
+
 
         // Wallhack Hack (Fire Through Walls): bypass wall/crate colliders to penetrate targets
         if (hacksRef.current.wallhack && !isKnife && !isLauncher) {
@@ -4496,6 +4625,61 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Check win targets
       const someoneWon = checkWinCondition();
 
+      // ===== TUTORIAL STAGE LOGIC =====
+      if (config.isCampaign && config.mapId === 'tutorial') {
+        const TUT_STAGES = [
+          'Welcome, Recruit. Use W A S D to move around the room.',
+          'Good movement. Now look around by moving your mouse.',
+          'See the rifle on the crate? Walk up to it and press E to pick it up.',
+          'Weapon acquired. A target has appeared on the wall. Aim and LEFT CLICK to shoot it.',
+          'Press Q to drop your weapon, then press E to pick it back up.',
+          'Training complete. You are ready for combat, soldier.',
+        ];
+
+        // Typewriter effect
+        if (game.tutCharIdx < game.tutText.length) {
+          const now = performance.now();
+          if (now - game.tutLastCharTime > 40) {
+            game.tutCharIdx++;
+            game.tutLastCharTime = now;
+            sounds.playTypeSound();
+          }
+        }
+        // Update tutorial text DOM element
+        if (tutTextRef.current) {
+          tutTextRef.current.textContent = game.tutText.substring(0, game.tutCharIdx);
+        }
+
+        // Stage 0: Movement - detect WASD
+        if (game.tutStage === 0 && !game.tutActionDone) {
+          if (Object.values(game.keys).some(v => v)) {
+            game.tutActionDone = true;
+            sounds.playTutComplete();
+            game.tutStage = 1;
+            game.tutText = TUT_STAGES[1];
+            game.tutCharIdx = 0;
+          }
+        }
+
+        // Stage 1: Look around (aim detection)
+        if (game.tutStage === 1 && !game.tutActionDone) {
+          if (Math.abs(game.yaw) > 0.05 || Math.abs(game.pitch) > 0.03 || game.isADS) {
+            game.tutActionDone = true;
+            sounds.playTutComplete();
+            game.tutStage = 2;
+            game.tutText = TUT_STAGES[2];
+            game.tutCharIdx = 0;
+          }
+        }
+
+        // Stage 2: Pickup (handled in keydown E handler below)
+        // When weapon is picked up, stage advances to 3
+
+        // Stage 3: Shoot target (handled in fire handler)
+
+        // Stage 4: Drop + pickup (handled in Q and E handlers)
+      }
+
       // Render Next Frame
       if (game.renderer && game.scene && game.camera && !someoneWon) {
         game.renderer.render(game.scene, game.camera);
@@ -4678,6 +4862,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   return (
     <div id="game-stage-container" ref={containerRef} className="relative w-full h-full bg-slate-950 overflow-hidden">
       <canvas id="fps-combat-canvas" ref={canvasRef} className="w-full h-full block cursor-pointer" />
+      {/* Tutorial typewriter text overlay */}
+      {config.isCampaign && config.mapId === 'tutorial' && (
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+          <div className="bg-black/70 border border-emerald-500/50 backdrop-blur-sm px-6 py-3 rounded-xl">
+            <p ref={tutTextRef} className="text-emerald-300 font-mono text-lg text-center min-w-[300px] whitespace-nowrap"></p>
+          </div>
+        </div>
+      )}
 
       {/* Mouse Lock & Instruction Screen Overlay */}
       {!isLocked && !isOverlayDismissed && !gameRef.current.playerIsDead && (
