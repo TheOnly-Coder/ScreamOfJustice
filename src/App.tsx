@@ -355,7 +355,7 @@ export default function App() {
     const tutorialConfig: MatchConfig = {
       mapId: 'tutorial',
       timeLimit: 600,
-      scoreLimit: 0,
+      scoreLimit: 5,
       botCount: 0,
       difficulty: 'EASY',
       gameMode: 'FFA',

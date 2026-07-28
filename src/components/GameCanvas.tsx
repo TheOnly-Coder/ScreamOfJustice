@@ -787,6 +787,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Initialize and run the 3D game
   useEffect(() => {
+    console.log('[GAME] init — isCampaign:', config.isCampaign, 'mapId:', config.mapId, 'scoreLimit:', config.scoreLimit, 'botCount:', config.botCount);
     const game = gameRef.current;
 
     // Build high-detail low-poly tactical soldier mesh visual representation of other real players
@@ -2843,6 +2844,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }, 1000);
 
     const endMatch = () => {
+      console.log('[GAME] endMatch called — isCampaign:', config.isCampaign);
       if (config.isCampaign) return; // Campaign missions never auto-end
       clearInterval(timerInterval);
       if (game.frameId) cancelAnimationFrame(game.frameId);
@@ -2909,8 +2911,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Check if score limit reached
     const checkWinCondition = () => {
-      if (config.isMultiplayer) return false; // In multiplayer, match_ended is sent by the server
-      if (config.isCampaign) return false; // No win-by-score in campaign missions
+      if (config.isMultiplayer) return false;
+      if (config.isCampaign) return false;
+      console.log('[GAME] checkWinCondition — playerKills:', game.playerKills, 'scoreLimit:', game.scoreLimit);
 
       // Team mode: check if any team reached score limit
       if (teamMode) {
