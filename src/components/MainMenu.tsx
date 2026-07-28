@@ -226,10 +226,20 @@ export function MainMenu({ onClassicMode, onCampaignMode, user }: MainMenuProps)
           style={getStyle('campaign')}>Campaign</button>
       </div>
       {!musicPlaying && (
-        <p className="absolute bottom-8 text-center z-10" style={{
-          fontFamily:'"Courier New",monospace',color:'rgba(255,255,255,0.25)',
-          fontSize:'0.75rem',letterSpacing:'0.15em',animation:'mmPulse 2s ease-in-out infinite',
-        }}>CLICK ANYWHERE TO ENABLE AUDIO</p>
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center cursor-pointer"
+          style={{background:'rgba(0,0,0,0.55)',backdropFilter:'blur(2px)'}}
+          onClick={(e)=>{e.stopPropagation();startMusic()}}>
+          <div style={{
+            border:'2px solid rgba(255,255,255,0.15)',borderRadius:'12px',
+            background:'rgba(10,22,40,0.7)',padding:'40px 60px',textAlign:'center',
+          }}>
+            <p style={{
+              fontFamily:'"Press Start 2P","Courier New",monospace',
+              color:'rgba(255,255,255,0.7)',fontSize:'clamp(0.7rem,1.4vw,1rem)',
+              letterSpacing:'0.08em',lineHeight:2,
+            }}>Click anywhere to enable sound</p>
+          </div>
+        </div>
       )}
       <style>{`
         @keyframes mmHue{0%{background-position:0% 50%}100%{background-position:400% 50%}}
