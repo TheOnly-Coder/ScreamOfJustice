@@ -645,6 +645,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutTarget: THREE.Group | null;
     tutGunSpawned: boolean;
     tutMouseMoved: boolean;
+    tutLastYaw: number | null;
+    tutLastPitch: number | null;
 
     wantsToFire: boolean;
 
@@ -740,6 +742,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutTarget: null,
     tutGunSpawned: false,
     tutMouseMoved: false,
+    tutLastYaw: null,
+    tutLastPitch: null,
     wantsToFire: false,
     matchTimeLeft: config.timeLimit,
     scoreLimit: config.scoreLimit,
@@ -2081,11 +2085,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     const handleWindowMouseMove = (e: MouseEvent) => {
       if (game.playerIsDead) return;
-
-      // Tutorial: detect any mouse movement (mousemove only fires when cursor actually moves)
-      if (config.isCampaign && config.mapId === 'tutorial') {
-        game.tutMouseMoved = true;
-      }
 
       const sens = parseFloat(localStorage.getItem('codm_camera_sens') || '1.0');
       const adsMult = parseFloat(localStorage.getItem('codm_ads_sens') || '0.5');
@@ -4669,9 +4668,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
-        // Stage 1: Look around (aim detection)
+        // Stage 1: Look around (detect camera rotation from mouse)
         if (game.tutStage === 1 && !game.tutActionDone) {
-          if (game.tutMouseMoved) {
+          const yawDelta = Math.abs(game.yaw - (game.tutLastYaw ?? game.yaw));
+          const pitchDelta = Math.abs(game.pitch - (game.tutLastPitch ?? game.pitch));
+          game.tutLastYaw = game.yaw;
+          game.tutLastPitch = game.pitch;
+          if (yawDelta > 0.001 || pitchDelta > 0.001) {
             game.tutActionDone = true;
             sounds.playTutComplete();
             game.tutStage = 2;
