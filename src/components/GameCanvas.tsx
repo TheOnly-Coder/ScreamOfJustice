@@ -3183,7 +3183,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           game.burstTimer = game.activeWeapon.burstDelay || 50;
           executeShot(performance.now());
         }
-      } else if ((game.isFiring || game.wantsToFire) && !game.playerIsDead) {
+      } else if ((game.isFiring || game.wantsToFire) && !game.playerIsDead && game.hasWeapon) {
         const isAuto = game.activeWeapon.type === 'AR' || game.activeWeapon.type === 'LMG' || game.activeWeapon.type === 'SMG' || game.activeWeapon.name.includes('Auto') || hacksRef.current.fullAuto;
         if (isAuto || !game.semiAutoFired || game.wantsToFire) {
           fireWeapon();
@@ -4661,6 +4661,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             game.tutStage = 1;
             game.tutText = TUT_STAGES[1];
             game.tutCharIdx = 0;
+            game.tutMouseMoved = false;
           }
         }
 
