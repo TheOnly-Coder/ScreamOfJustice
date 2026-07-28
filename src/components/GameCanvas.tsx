@@ -2082,11 +2082,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const handleWindowMouseMove = (e: MouseEvent) => {
       if (game.playerIsDead) return;
 
-      // Tutorial: detect any mouse movement regardless of pointer lock method
+      // Tutorial: detect any mouse movement (mousemove only fires when cursor actually moves)
       if (config.isCampaign && config.mapId === 'tutorial') {
-        if (Math.abs(e.movementX) > 0 || Math.abs(e.movementY) > 0 || Math.abs(e.clientX - (lastMouseX || e.clientX)) > 0 || Math.abs(e.clientY - (lastMouseY || e.clientY)) > 0) {
-          game.tutMouseMoved = true;
-        }
+        game.tutMouseMoved = true;
       }
 
       const sens = parseFloat(localStorage.getItem('codm_camera_sens') || '1.0');
