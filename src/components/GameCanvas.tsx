@@ -647,6 +647,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutMouseMoved: boolean;
     tutLastYaw: number | null;
     tutLastPitch: number | null;
+    tutStage1Timer: number | null;
 
     wantsToFire: boolean;
 
@@ -744,6 +745,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutMouseMoved: false,
     tutLastYaw: null,
     tutLastPitch: null,
+    tutStage1Timer: null,
     wantsToFire: false,
     matchTimeLeft: config.timeLimit,
     scoreLimit: config.scoreLimit,
@@ -4668,18 +4670,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
-        // Stage 1: Look around (detect camera rotation from mouse)
+        // Stage 1: Look around — auto-advance 1s after typewriter text finishes
         if (game.tutStage === 1 && !game.tutActionDone) {
-          const yawDelta = Math.abs(game.yaw - (game.tutLastYaw ?? game.yaw));
-          const pitchDelta = Math.abs(game.pitch - (game.tutLastPitch ?? game.pitch));
-          game.tutLastYaw = game.yaw;
-          game.tutLastPitch = game.pitch;
-          if (yawDelta > 0.001 || pitchDelta > 0.001) {
-            game.tutActionDone = true;
-            sounds.playTutComplete();
-            game.tutStage = 2;
-            game.tutText = TUT_STAGES[2];
-            game.tutCharIdx = 0;
+          if (game.tutCharIdx >= game.tutText.length) {
+            if (!game.tutStage1Timer) game.tutStage1Timer = performance.now();
+            if (performance.now() - game.tutStage1Timer > 1000) {
+              game.tutActionDone = true;
+              sounds.playTutComplete();
+              game.tutStage = 2;
+              game.tutText = TUT_STAGES[2];
+              game.tutCharIdx = 0;
+            }
           }
         }
 
