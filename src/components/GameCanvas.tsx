@@ -1923,6 +1923,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const teamMode = isTeamMode(config.gameMode);
     const teamCfg = teamMode ? getTeamConfig(config.gameMode!) : null;
 
+    // Tutorial: skip regular bot spawning (dummies are spawned manually in stage 6)
+    if (!(config.isCampaign && config.mapId === 'tutorial')) {
     for (let i = 0; i < (teamMode ? teamCfg!.totalBots : config.botCount); i++) {
       const bot = spawnBot(i);
 
@@ -1954,6 +1956,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       bots.push(bot);
+    }
     }
     game.bots = bots;
 
@@ -4734,7 +4737,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             game.tutText = TUT_STAGES[6];
             game.tutCharIdx = 0;
             game.tutActionDone = false;
-            const dummyPos = new THREE.Vector3(0, 0, -6);
+            const dummyPos = new THREE.Vector3(5, 0, -4);
             const dummyBot = spawnBot(bots.length);
             dummyBot.position.copy(dummyPos);
             dummyBot.meshGroup.position.copy(dummyPos);
