@@ -186,6 +186,7 @@ export interface BotEntity {
   behaviorTimer?: number;
   lastDodgeTime?: number;
   suppressFireTimer?: number;
+  isTutorialDummy?: boolean;
   teamId?: number; // Team index (0, 1, 2) for team modes; undefined = FFA
 }
 
@@ -648,6 +649,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutLastYaw: number | null;
     tutLastPitch: number | null;
     tutStage1Timer: number | null;
+    tutEnemyBot: BotEntity | null;
+    tutReloadStageDone: boolean;
+    tutAmmoPickedUp: boolean;
+    tutEndTimer: number | null;
 
     wantsToFire: boolean;
 
@@ -746,6 +751,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutLastYaw: null,
     tutLastPitch: null,
     tutStage1Timer: null,
+    tutEnemyBot: null,
+    tutReloadStageDone: false,
+    tutAmmoPickedUp: false,
+    tutEndTimer: null,
     wantsToFire: false,
     matchTimeLeft: config.timeLimit,
     scoreLimit: config.scoreLimit,
@@ -1596,6 +1605,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // ===== TUTORIAL SYSTEM =====
     if (config.isCampaign && config.mapId === 'tutorial') {
       game.hasWeapon = false;
+      game.playerClip = playerClass.primaryWeapon.maxAmmo;
+      game.playerReserve = 0;
       game.tutStage = 0;
       game.tutText = 'Welcome, Recruit. Use W A S D to move around the room.';
       game.tutCharIdx = 0;
@@ -2315,9 +2326,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // Tutorial: advance from stage 2 (pickup) to stage 3 (shoot target)
           if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 4) {
             game.tutStage = 5;
-            game.tutText = 'Training complete. You are ready for combat, soldier.';
+            game.tutText = 'Press R to reload your weapon. Watch your ammo count replenish.';
             game.tutCharIdx = 0;
-            game.tutActionDone = true;
+            game.tutActionDone = false;
+            game.playerReserve = playerClass.primaryWeapon.maxAmmo;
+            onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
             sounds.playTutComplete();
           } else if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 2) {
             game.tutStage = 3;
@@ -2397,6 +2410,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       game.isReloading = true;
       game.reloadTimeRemaining = game.activeWeapon.reloadTime;
       sounds.playReload();
+      if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 5 && !game.tutReloadStageDone) {
+        game.tutReloadStageDone = true;
+      }
     };
 
     // Ability triggers
@@ -2867,6 +2883,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         sounds.playKill();
+        if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 6 && bot.isTutorialDummy) {
+          game.tutStage = 7;
+          game.tutText = 'Enemy down! Killing enemies awards bonus ammo. Press R to reload, then walk over the green ammo pack to pick it up.';
+          game.tutCharIdx = 0;
+          game.tutActionDone = false;
+          sounds.playTutComplete();
+        }
         const isSniper = game.activeWeapon.type === 'sniper';
               const isNoscope = isSniper && !game.isADS;
               if (isNoscope && isHeadshot) triggerMedal("NOSCOPE HEADSHOT!", 'noscope_headshot');
@@ -4169,6 +4192,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           continue;
         }
 
+        // Tutorial dummy: stay still, don't attack
+        if (bot.isTutorialDummy) {
+          bot.meshGroup.position.copy(bot.position);
+          continue;
+        }
+
         // Shooting rate checks
         if (bot.shootCooldownRemaining > 0) {
           bot.shootCooldownRemaining -= delta * 1000;
@@ -4641,7 +4670,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           'See the rifle on the crate? Walk up to it and press E to pick it up.',
           'Weapon acquired. A target has appeared on the wall. Aim and LEFT CLICK to shoot it.',
           'Press Q to drop your weapon, then press E to pick it back up.',
-          'Training complete. You are ready for combat, soldier.',
+          'Press R to reload your weapon. Watch your ammo count replenish.',
+          'A target dummy has appeared. Shoot it and watch your ammo count — killing enemies awards bonus reserve ammo.',
+          'Enemy down! Killing enemies awards bonus ammo. Press R to reload, then walk over the green ammo pack to pick it up.',
+          'Outstanding, Recruit. You have completed basic training. You are ready for combat, soldier.',
         ];
 
         // Typewriter effect
@@ -4692,6 +4724,44 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Stage 3: Shoot target (handled in fire handler)
 
         // Stage 4: Drop + pickup (handled in Q and E handlers)
+
+        // Stage 5: Reload — detect when reload completes
+        if (game.tutStage === 5 && !game.tutActionDone) {
+          if (game.tutReloadStageDone && !game.isReloading) {
+            game.tutActionDone = true;
+            sounds.playTutComplete();
+            game.tutStage = 6;
+            game.tutText = TUT_STAGES[6];
+            game.tutCharIdx = 0;
+            game.tutActionDone = false;
+            const dummyPos = new THREE.Vector3(0, 0, -6);
+            const dummyBot = spawnBot(bots.length);
+            dummyBot.position.copy(dummyPos);
+            dummyBot.meshGroup.position.copy(dummyPos);
+            dummyBot.rotationY = Math.PI;
+            dummyBot.meshGroup.rotation.y = Math.PI;
+            dummyBot.isTutorialDummy = true;
+            dummyBot.health = 80;
+            dummyBot.maxHealth = 80;
+            bots.push(dummyBot);
+            game.bots = bots;
+            game.tutEnemyBot = dummyBot;
+          }
+        }
+
+        // Stage 6: Shoot the enemy (handled in damageBot on kill)
+
+        // Stage 7: Reload + pick up ammo pack (handled in startReload and ammo pickup)
+
+        // Stage 8: End — auto-advance 1s after typewriter finishes
+        if (game.tutStage === 8 && !game.tutActionDone) {
+          if (game.tutCharIdx >= game.tutText.length) {
+            if (!game.tutEndTimer) game.tutEndTimer = performance.now();
+            if (performance.now() - game.tutEndTimer > 1000) {
+              game.tutActionDone = true;
+            }
+          }
+        }
       }
 
       // Render Next Frame
