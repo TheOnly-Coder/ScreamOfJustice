@@ -616,6 +616,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     muzzleFlashLight: THREE.PointLight | null;
     groundWeapons: { mesh: THREE.Group; weapon: Weapon; isPrimary: boolean; ammoClip: number; ammoReserve: number }[];
     hasWeapon: boolean;
+    droppedPrimary: boolean;
+    droppedSecondary: boolean;
     muzzleFlashTimer: number;
     particles: THREE.Points | null;
     particleData: { pos: THREE.Vector3; vel: THREE.Vector3; color: THREE.Color; life: number; maxLife: number }[];
@@ -706,6 +708,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     muzzleFlashLight: null,
     groundWeapons: [],
     hasWeapon: true,
+    droppedPrimary: false,
+    droppedSecondary: false,
     muzzleFlashTimer: 0,
     particles: null,
     particleData: [],
@@ -2083,30 +2087,69 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         startReload();
       }
 
-      // Weapon swap keys
-      if (key === keySwap && !game.isReloading && !game.playerIsDead) {
-        swapWeapon(!game.isPrimary);
-      }
-      if (key === '1' && !game.isReloading && !game.isPrimary && !game.playerIsDead) {
-        swapWeapon(true);
-      }
-      if (key === '2' && !game.isReloading && game.isPrimary && !game.playerIsDead) {
-        swapWeapon(false);
+      // Weapon swap keys (only if holding a weapon)
+      if (game.hasWeapon) {
+        if (key === keySwap && !game.isReloading && !game.playerIsDead) {
+          swapWeapon(!game.isPrimary);
+        }
+        if (key === '1' && !game.isReloading && !game.isPrimary && !game.playerIsDead) {
+          swapWeapon(true);
+        }
+        if (key === '2' && !game.isReloading && game.isPrimary && !game.playerIsDead) {
+          swapWeapon(false);
+        }
       }
 
       // Q: Drop weapon (campaign only)
       if (key === 'q' && config.isCampaign && game.hasWeapon && !game.isReloading && !game.playerIsDead) {
         const dropGroup = new THREE.Group();
-        // Simple weapon box on ground
-        const boxGeo = new THREE.BoxGeometry(0.3, 0.15, 0.08);
-        const boxMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, metalness: 0.7, roughness: 0.3 });
-        const box = new THREE.Mesh(boxGeo, boxMat);
-        box.rotation.x = -Math.PI / 2;
-        dropGroup.add(box);
+        // Build a recognizable weapon model on the ground based on weapon type
+        const wep = game.activeWeapon;
+        const wepColor = new THREE.Color(wep.color).multiplyScalar(0.7);
+        const gunMat = new THREE.MeshStandardMaterial({ color: wepColor, roughness: 0.6, metalness: 0.5 });
+        const darkMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5, metalness: 0.7 });
+        const wType = wep.type;
+        // Body dimensions based on weapon type
+        let bodyW = 0.06, bodyH = 0.06, bodyD = 0.5;
+        if (wType === 'pistol') { bodyW = 0.04; bodyH = 0.08; bodyD = 0.22; }
+        else if (wType === 'sniper') { bodyW = 0.05; bodyH = 0.06; bodyD = 0.7; }
+        else if (wType === 'shotgun') { bodyW = 0.06; bodyH = 0.07; bodyD = 0.55; }
+        else if (wType === 'smg') { bodyW = 0.05; bodyH = 0.06; bodyD = 0.35; }
+        else if (wType === 'lmg') { bodyW = 0.07; bodyH = 0.08; bodyD = 0.6; }
+        else if (wType === 'melee') { bodyW = 0.02; bodyH = 0.04; bodyD = 0.35; }
+        const body = new THREE.Mesh(new THREE.BoxGeometry(bodyW, bodyH, bodyD), gunMat);
+        body.rotation.x = -Math.PI / 2;
+        body.castShadow = true;
+        dropGroup.add(body);
+        // Add a barrel
+        if (wType !== 'melee') {
+          const barrelR = wType === 'shotgun' ? 0.018 : (wType === 'sniper' ? 0.012 : 0.015);
+          const barrel = new THREE.Mesh(new THREE.CylinderGeometry(barrelR, barrelR, bodyD * 0.3, 6), darkMat);
+          barrel.rotation.x = Math.PI / 2;
+          barrel.position.set(0, bodyH / 2, -bodyD * 0.35);
+          barrel.castShadow = true;
+          dropGroup.add(barrel);
+        }
+        // Add a magazine for non-melee, non-sniper
+        if (wType !== 'melee' && wType !== 'sniper') {
+          const magW = wType === 'pistol' ? 0.025 : 0.03;
+          const magH = wType === 'pistol' ? 0.06 : 0.08;
+          const mag = new THREE.Mesh(new THREE.BoxGeometry(magW, magH, 0.02), darkMat);
+          mag.position.set(0, -bodyH / 2 - magH / 2, bodyD * 0.1);
+          mag.castShadow = true;
+          dropGroup.add(mag);
+        }
+        // Add stock for rifles/smg/lmg/shotgun
+        if (['assault_rifle', 'smg', 'lmg', 'shotgun'].includes(wType)) {
+          const stock = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.05, 0.12), gunMat);
+          stock.position.set(0, -0.01, bodyD * 0.45);
+          stock.castShadow = true;
+          dropGroup.add(stock);
+        }
         const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), game.yaw);
         dropGroup.position.set(
           game.playerPos.x + fwd.x * 1.5,
-          0.15,
+          0.1,
           game.playerPos.z + fwd.z * 1.5
         );
         if (game.scene) {
@@ -2116,16 +2159,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const savedWeapon = { ...game.activeWeapon };
           const savedIsPrimary = game.isPrimary;
           game.groundWeapons.push({ mesh: dropGroup, weapon: savedWeapon, isPrimary: savedIsPrimary, ammoClip: savedClip, ammoReserve: savedReserve });
+          // Track which slot was dropped
+          if (savedIsPrimary) { game.droppedPrimary = true; } else { game.droppedSecondary = true; }
           game.hasWeapon = false;
           onPlayerAmmoUpdate(0, 0);
           onWeaponChange({ ...savedWeapon, name: 'None', damage: 0, fireRate: 999, maxAmmo: 0, reloadTime: 0, range: 0, recoil: 0, spread: 0, type: 'none' } as any);
-          // Remove first-person weapon model
+          // Hide first-person weapon model
+          if (game.weaponGroup) game.weaponGroup.visible = false;
           if (game.slideMesh) { game.scene.remove(game.slideMesh); game.slideMesh = null; }
           if (game.slashMesh) { game.scene.remove(game.slashMesh); game.slashMesh = null; }
         }
       }
 
       // E: Pick up weapon (campaign only, only when holding nothing)
+      let pickedUpWeapon = false;
       if (key === 'e' && config.isCampaign && !game.hasWeapon && !game.playerIsDead && game.groundWeapons.length > 0) {
         let closestIdx = -1;
         let closestDist = 3; // pickup range
@@ -2147,13 +2194,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           game.playerReserve = picked.ammoReserve;
           if (picked.isPrimary) {
             game.primaryAmmo = { clip: picked.ammoClip, reserve: picked.ammoReserve };
+            game.droppedPrimary = false;
           } else {
             game.secondaryAmmo = { clip: picked.ammoClip, reserve: picked.ammoReserve };
+            game.droppedSecondary = false;
           }
           onWeaponChange(game.activeWeapon);
           onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
           sounds.playReload();
           buildFirstPersonWeapon();
+          if (game.weaponGroup) game.weaponGroup.visible = true;
+          pickedUpWeapon = true;
         }
       }
 
@@ -2168,8 +2219,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         game.isFiring = true;
       }
 
-      // Custom Aim In ADS toggle
-      if (key === keyAim && !game.playerIsDead) {
+      // Custom Aim In ADS toggle (skip if we just picked up a weapon in campaign)
+      if (key === keyAim && !game.playerIsDead && !(config.isCampaign && pickedUpWeapon)) {
         game.isADS = !game.isADS;
       }
     };
@@ -2191,6 +2242,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Weapon swap handler with Pass 1 Ammo Preservation
     const swapWeapon = (primary: boolean) => {
       if (primary === game.isPrimary) return;
+      // Block swapping to a dropped slot
+      if (primary && game.droppedPrimary) return;
+      if (!primary && game.droppedSecondary) return;
 
       // 1. Save currently active weapon's ammo state
       if (game.isPrimary) {
