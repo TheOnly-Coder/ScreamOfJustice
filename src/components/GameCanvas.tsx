@@ -4667,6 +4667,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             game.tutText = TUT_STAGES[1];
             game.tutCharIdx = 0;
             game.tutMouseMoved = false;
+            game.tutActionDone = false;
+            game.tutStage1Timer = null;
           }
         }
 
