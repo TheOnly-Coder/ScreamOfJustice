@@ -1649,6 +1649,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     onPlayerHealthUpdate(game.playerHealth, game.playerMaxHealth);
     onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
 
+    // ===== SHARED WEAPON BUILDER (accessible by all modes for weapon swapping) =====
+    const buildFirstPersonWeapon = () => {
+      if (!game.weaponGroup) return;
+      if (!game.hasWeapon) {
+        // Clear any existing weapon model when holding nothing
+        while (game.weaponGroup.children.length > 0) {
+          game.weaponGroup.remove(game.weaponGroup.children[0]);
+        }
+        game.slideMesh = null;
+        game.slashMesh = null;
+        game.weaponMesh = null;
+        return;
+      }
+      buildHighQualityFirstPersonWeapon(game, game.weaponGroup, playerClass);
+    };
+
         // ===== TUTORIAL SYSTEM =====
     if (config.isCampaign && config.mapId === 'tutorial') {
       game.hasWeapon = false;
@@ -1741,7 +1757,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const weaponGroup = new THREE.Group();
       scene.add(weaponGroup);
       game.weaponGroup = weaponGroup;
-      buildHighQualityFirstPersonWeapon(game, weaponGroup, playerClass);
+      buildFirstPersonWeapon();
 
       // === CREATE SERGEANT BRIGGS (ally NPC) ===
       const briggsMat = new THREE.MeshStandardMaterial({ color: 0x2d4a2d, roughness: 0.8, flatShading: true });
@@ -1903,9 +1919,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
      * - Adds articulated tactical gloves and sleeves.
      * ============================================================================
      */
-    const buildFirstPersonWeapon = () => {
-      buildHighQualityFirstPersonWeapon(game, weaponGroup, playerClass);
-    };
     buildFirstPersonWeapon();
     }
 
