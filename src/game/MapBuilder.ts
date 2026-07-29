@@ -16,7 +16,7 @@ export interface MapData {
   fogDensity: number;
 }
 
-export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo' | 'tutorial'): MapData {
+export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo' | 'tutorial' | 'campaign2'): MapData {
   const colliders: CollidableBox[] = [];
   const spawnPoints: THREE.Vector3[] = [];
 
@@ -1039,6 +1039,169 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
 
     spawnPoints.push(
       new THREE.Vector3(0, 1.5, 0)
+    );
+  } else if (mapId === 'campaign2') {
+    // CAMPAIGN MISSION 2: "Behind Enemy Lines"
+    // Layout: Forest (z: -80 to -10) -> Gate (z: -10) -> Military Base (z: -10 to 50)
+    // Player starts at z=60 (south end of base), truck at z=45
+    // Forest patrol enemies in z: -80 to -15
+    // Gate privates at z=-10, truck at z=45
+
+    ambientColor = '#4a6741';
+    directionalColor = '#ffe4b5';
+    fogColor = '#1a2e1a';
+    fogDensity = 0.008;
+
+    // === GROUND PLANE ===
+    const groundGeo = new THREE.PlaneGeometry(200, 200);
+    const grassMat = new THREE.MeshStandardMaterial({ color: 0x2d5a1e, roughness: 0.95, flatShading: true });
+    const ground = new THREE.Mesh(groundGeo, grassMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.set(0, 0, -15);
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // === FOREST SECTION (z: -80 to -15) ===
+    // Trees
+    const trunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 4, 6);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.9, flatShading: true });
+    const foliageGeo = new THREE.ConeGeometry(1.5, 3, 6);
+    const foliageMat = new THREE.MeshStandardMaterial({ color: 0x1a4d1a, roughness: 0.85, flatShading: true });
+
+    const treePositions: [number, number, number][] = [
+      [-12,0,-25], [8,0,-30], [-5,0,-40], [15,0,-35], [-18,0,-45],
+      [3,0,-50], [-10,0,-55], [12,0,-60], [-7,0,-65], [18,0,-70],
+      [-15,0,-75], [5,0,-80], [20,0,-50], [-20,0,-35], [0,0,-45],
+      [-8,0,-28], [10,0,-42], [-14,0,-58], [6,0,-72], [-3,0,-33],
+      [22,0,-65], [-22,0,-50], [16,0,-28], [-6,0,-70],
+      // Right side trees
+      [25,0,-25], [28,0,-40], [22,0,-55], [30,0,-70], [26,0,-80],
+      // Left side trees
+      [-25,0,-30], [-28,0,-45], [-24,0,-60], [-30,0,-75], [-26,0,-20],
+    ];
+
+    for (const [tx, ty, tz] of treePositions) {
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.set(tx, 2, tz);
+      trunk.castShadow = true;
+      scene.add(trunk);
+      const foliage = new THREE.Mesh(foliageGeo, foliageMat);
+      foliage.position.set(tx, 5, tz);
+      foliage.castShadow = true;
+      scene.add(foliage);
+    }
+
+    // Forest floor bushes (small non-collidable decoration)
+    const bushGeo = new THREE.SphereGeometry(0.6, 5, 4);
+    const bushMat = new THREE.MeshStandardMaterial({ color: 0x2e6b2e, roughness: 0.9, flatShading: true });
+    const bushPositions: [number, number, number][] = [
+      [-3,0.3,-27], [7,0.3,-38], [-9,0.3,-48], [11,0.3,-57], [-4,0.3,-67],
+      [14,0.3,-32], [-16,0.3,-52], [2,0.3,-62], [-11,0.3,-73], [8,0.3,-78],
+    ];
+    for (const [bx, by, bz] of bushPositions) {
+      const bush = new THREE.Mesh(bushGeo, bushMat);
+      bush.position.set(bx, by, bz);
+      scene.add(bush);
+    }
+
+    // === GATE AREA (z: -15 to -8) ===
+    // Gate posts
+    createCrate([-6, 2, -12], [0.5, 4, 0.5], 0x555555, 0, 'crate');
+    createCrate([6, 2, -12], [0.5, 4, 0.5], 0x555555, 0, 'crate');
+    // Gate crossbar
+    createCrate([0, 3.8, -12], [12.5, 0.4, 0.4], 0x444444, 0, 'crate');
+    // Side walls near gate
+    createCrate([-10, 1.5, -12], [8, 3, 0.5], 0x4a4a4a, 0, 'wall');
+    createCrate([10, 1.5, -12], [8, 3, 0.5], 0x4a4a4a, 0, 'wall');
+
+    // === MILITARY BASE (z: -8 to 50) ===
+    // Base perimeter walls
+    createCrate([-20, 2, 20], [0.5, 4, 60], 0x5c5c5c, 0, 'wall'); // West wall
+    createCrate([20, 2, 20], [0.5, 4, 60], 0x5c5c5c, 0, 'wall');  // East wall
+    createCrate([0, 2, 50], [40.5, 4, 0.5], 0x5c5c5c, 0, 'wall');  // North wall
+    createCrate([0, 2, -8], [40.5, 4, 0.5], 0x5c5c5c, 0, 'wall');  // South wall (with gap for gate)
+    // Patch wall segments around gate opening (gap from x=-5 to x=5)
+    createCrate([-12.5, 2, -8], [15, 4, 0.5], 0x5c5c5c, 0, 'wall');
+    createCrate([12.5, 2, -8], [15, 4, 0.5], 0x5c5c5c, 0, 'wall');
+
+    // Base buildings / structures
+    createCrate([-14, 1.5, 10], [6, 3, 5], 0x6b705c, 0, 'crate');  // Building 1
+    createCrate([14, 1.5, 10], [6, 3, 5], 0x6b705c, 0, 'crate');   // Building 2
+    createCrate([-14, 1.5, 30], [6, 3, 5], 0x6b705c, 0, 'crate');  // Building 3
+    createCrate([14, 1.5, 30], [6, 3, 5], 0x6b705c, 0, 'crate');   // Building 4
+    // Cover crates scattered in base
+    createCrate([-5, 0.5, 15], [1, 1, 1], 0x78716c, 0, 'crate');
+    createCrate([5, 0.5, 25], [1, 1, 1], 0x78716c, 0, 'crate');
+    createCrate([0, 0.5, 35], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+
+    // === GREEN TRUCK (objective, z=45) ===
+    const truckBody = new THREE.Mesh(
+      new THREE.BoxGeometry(2.5, 1.5, 5),
+      new THREE.MeshStandardMaterial({ color: 0x2d6a2d, roughness: 0.7, flatShading: true })
+    );
+    truckBody.position.set(0, 1.2, 45);
+    truckBody.castShadow = true;
+    scene.add(truckBody);
+    // Truck cab
+    const truckCab = new THREE.Mesh(
+      new THREE.BoxGeometry(2.5, 1.5, 2),
+      new THREE.MeshStandardMaterial({ color: 0x256b25, roughness: 0.7, flatShading: true })
+    );
+    truckCab.position.set(0, 2.2, 47);
+    truckCab.castShadow = true;
+    scene.add(truckCab);
+    // Truck wheels
+    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 8);
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9, flatShading: true });
+    [[-1.4, 0.4, 43], [1.4, 0.4, 43], [-1.4, 0.4, 47.5], [1.4, 0.4, 47.5]].forEach(([wx, wy, wz]) => {
+      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(wx, wy, wz);
+      scene.add(wheel);
+    });
+    // Truck bed (flat area)
+    const truckBed = new THREE.Mesh(
+      new THREE.BoxGeometry(2.3, 0.1, 3),
+      new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.9, flatShading: true })
+    );
+    truckBed.position.set(0, 2.0, 44.5);
+    scene.add(truckBed);
+
+    // === LIGHTING ===
+    // Ambient forest light
+    const ambLight = new THREE.AmbientLight(0x4a6741, 0.6);
+    scene.add(ambLight);
+    // Sunlight through trees
+    const dirLight = new THREE.DirectionalLight(0xffe4b5, 1.2);
+    dirLight.position.set(20, 30, -30);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 150;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -100;
+    scene.add(dirLight);
+    // Base area lights
+    const baseLight1 = new THREE.PointLight(0xffcc80, 0.8, 40);
+    baseLight1.position.set(0, 6, 20);
+    scene.add(baseLight1);
+    const baseLight2 = new THREE.PointLight(0xffcc80, 0.5, 30);
+    baseLight2.position.set(0, 6, 40);
+    scene.add(baseLight2);
+
+    // Sky dome (simple)
+    const skyGeo = new THREE.SphereGeometry(100, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    const skyMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide });
+    const sky = new THREE.Mesh(skyGeo, skyMat);
+    sky.position.set(0, 0, -15);
+    scene.add(sky);
+
+    // Spawn point (south end of base, near gate entrance)
+    spawnPoints.push(
+      new THREE.Vector3(0, 1.5, -5)
     );
   }
 

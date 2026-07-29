@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, CharacterClass, MatchConfig, MatchStats, KillFeedEntry, KeyBindings, DEFAULT_KEYBINDINGS, TouchBindings, DEFAULT_TOUCHBINDINGS, Weapon, GraphicsQuality, isTeamMode, CLASSES } from './types';
+import { GameState, CharacterClass, MatchConfig, MatchStats, KillFeedEntry, KeyBindings, DEFAULT_KEYBINDINGS, TouchBindings, DEFAULT_TOUCHBINDINGS, Weapon, GraphicsQuality, isTeamMode, CLASSES, WEAPONS } from './types';
 import { Lobby } from './components/Lobby';
 import { GameCanvas } from './components/GameCanvas';
 import { GameHUD } from './components/GameHUD';
@@ -349,32 +349,72 @@ export default function App() {
     setGameState('CAMPAIGN_GLOBE');
   };
 
-  const handleStartTutorialChapter = (_chapter: number) => {
-    // Chapter 1: Tutorial - load assault class on tutorial map, no bots
-    const assaultClass = CLASSES[0];
-    const tutorialConfig: MatchConfig = {
-      mapId: 'tutorial',
-      timeLimit: 600,
-      scoreLimit: 5,
-      botCount: 0,
-      difficulty: 'EASY',
-      gameMode: 'FFA',
-      isCampaign: true,
-    };
-    setMatchConfig(tutorialConfig);
-    setPlayerClass(assaultClass);
-    setPlayerName(user?.username || 'Recruit_Soldier');
-    setGameMode('FFA');
-    setTeamScores([]);
-    setPlayerHealth(assaultClass.maxHealth);
-    setPlayerMaxHealth(assaultClass.maxHealth);
-    setPlayerClip(assaultClass.primaryWeapon.maxAmmo);
-    setPlayerReserve(assaultClass.primaryWeapon.maxAmmo * 3);
-    setMatchTimeLeft(600);
-    setAbilityCooldownLeft(0);
-    setKillFeed([]);
-    touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-    setGameState('PLAYING');
+  const handleStartTutorialChapter = (chapter: number) => {
+    if (chapter === 1) {
+      // Chapter 1: Tutorial - load assault class on tutorial map, no bots
+      const assaultClass = CLASSES[0];
+      const tutorialConfig: MatchConfig = {
+        mapId: 'tutorial',
+        timeLimit: 600,
+        scoreLimit: 5,
+        botCount: 0,
+        difficulty: 'EASY',
+        gameMode: 'FFA',
+        isCampaign: true,
+      };
+      setMatchConfig(tutorialConfig);
+      setPlayerClass(assaultClass);
+      setPlayerName(user?.username || 'Recruit_Soldier');
+      setGameMode('FFA');
+      setTeamScores([]);
+      setPlayerHealth(assaultClass.maxHealth);
+      setPlayerMaxHealth(assaultClass.maxHealth);
+      setPlayerClip(assaultClass.primaryWeapon.maxAmmo);
+      setPlayerReserve(assaultClass.primaryWeapon.maxAmmo * 3);
+      setMatchTimeLeft(600);
+      setAbilityCooldownLeft(0);
+      setKillFeed([]);
+      touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
+      setGameState('PLAYING');
+    } else if (chapter === 2) {
+      // Chapter 2: Behind Enemy Lines - RPG primary, Pistol secondary
+      const campaignClass: CharacterClass = {
+        id: 'campaign2_loadout',
+        name: 'Operative',
+        codename: 'OP',
+        description: 'Campaign Mission 2 loadout.',
+        primaryWeapon: WEAPONS.rpg7_rocket,
+        secondaryWeapon: WEAPONS.mw11_pistol,
+        maxHealth: 160,
+        speed: 1.0,
+        color: '#1a2e1a',
+        accentColor: '#2d6a2d',
+        ability: { name: 'None', description: '', cooldown: 999 },
+      };
+      const c2Config: MatchConfig = {
+        mapId: 'campaign2',
+        timeLimit: 600,
+        scoreLimit: 99,
+        botCount: 0,
+        difficulty: 'MEDIUM',
+        gameMode: 'FFA',
+        isCampaign: true,
+      };
+      setMatchConfig(c2Config);
+      setPlayerClass(campaignClass);
+      setPlayerName(user?.username || 'Recruit_Soldier');
+      setGameMode('FFA');
+      setTeamScores([]);
+      setPlayerHealth(campaignClass.maxHealth);
+      setPlayerMaxHealth(campaignClass.maxHealth);
+      setPlayerClip(campaignClass.primaryWeapon.maxAmmo);
+      setPlayerReserve(campaignClass.primaryWeapon.maxAmmo * 5);
+      setMatchTimeLeft(600);
+      setAbilityCooldownLeft(0);
+      setKillFeed([]);
+      touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
+      setGameState('PLAYING');
+    }
   };
 
   const handleSwitchBackend = (mode: 'default' | 'fast') => {

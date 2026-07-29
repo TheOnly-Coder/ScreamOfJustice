@@ -187,6 +187,11 @@ export interface BotEntity {
   lastDodgeTime?: number;
   suppressFireTimer?: number;
   isTutorialDummy?: boolean;
+  isC2Patrol?: boolean;
+  c2PatrolPaths?: THREE.Vector3[];
+  c2PatrolIndex?: number;
+  c2PatrolWait?: number;
+  c2IsTruckGuard?: boolean;
   teamId?: number; // Team index (0, 1, 2) for team modes; undefined = FFA
 }
 
@@ -436,6 +441,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tutTextRef = useRef<HTMLDivElement>(null);
+  const c2DialogueTextRef = useRef<HTMLDivElement>(null);
+  const c2DialogueSpeakerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   // States
@@ -655,6 +662,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutEndTimer: number | null;
     tutStage7ReserveAtEnter: number; // tracks clip+reserve total when stage 7 starts
 
+    // Campaign Mission 2: Behind Enemy Lines
+    c2Stage: number; // 0=forest, 1=gate met, 2=base, 3=won
+    c2ForestKills: number;
+    c2BackupSpawned: boolean;
+    c2TruckGuardsSpawned: boolean;
+    c2DialogueText: string;
+    c2DialogueSpeaker: string;
+    c2DialogueCharIdx: number;
+    c2DialogueLastCharTime: number;
+    c2DialogueTimer: number | null; // auto-dismiss timer
+    c2DialogueQueue: { speaker: string; text: string }[];
+    c2GateTriggered: boolean;
+    c2BriggsGroup: THREE.Group | null; // Briggs 3D model
+    c2BriggsPos: THREE.Vector3; // Briggs world position
+    c2PrivateHaleGroup: THREE.Group | null;
+    c2PrivateMercerGroup: THREE.Group | null;
+    c2PatrolBots: BotEntity[]; // Forest patrol enemies
+    c2TruckGuardBots: BotEntity[]; // Truck guards (if kills > 0)
+    c2BackupBots: BotEntity[]; // Backup enemies
+
     wantsToFire: boolean;
 
     // Match Timer
@@ -757,6 +784,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutAmmoPickedUp: false,
     tutEndTimer: null,
     tutStage7ReserveAtEnter: 0,
+    c2Stage: 0,
+    c2ForestKills: 0,
+    c2BackupSpawned: false,
+    c2TruckGuardsSpawned: false,
+    c2DialogueText: '',
+    c2DialogueSpeaker: '',
+    c2DialogueCharIdx: 0,
+    c2DialogueLastCharTime: 0,
+    c2DialogueTimer: null,
+    c2DialogueQueue: [],
+    c2GateTriggered: false,
+    c2BriggsGroup: null,
+    c2BriggsPos: new THREE.Vector3(0, 0, 0),
+    c2PrivateHaleGroup: null,
+    c2PrivateMercerGroup: null,
+    c2PatrolBots: [],
+    c2TruckGuardBots: [],
+    c2BackupBots: [],
     wantsToFire: false,
     matchTimeLeft: config.timeLimit,
     scoreLimit: config.scoreLimit,
@@ -1674,6 +1719,170 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       scene.add(weaponGroup);
       game.weaponGroup = weaponGroup;
       weaponGroup.visible = false;
+    } else if (config.isCampaign && config.mapId === 'campaign2') {
+      // ===== CAMPAIGN 2: BEHIND ENEMY LINES =====
+      game.hasWeapon = true;
+      game.playerClip = playerClass.primaryWeapon.maxAmmo;
+      game.playerReserve = playerClass.primaryWeapon.maxAmmo * 5;
+      game.c2Stage = 0;
+      game.c2ForestKills = 0;
+      game.c2DialogueQueue = [];
+      game.c2DialogueText = '';
+      game.c2DialogueSpeaker = '';
+      game.c2DialogueCharIdx = 0;
+      game.c2DialogueLastCharTime = 0;
+      game.c2DialogueTimer = null;
+      game.c2GateTriggered = false;
+      game.c2BackupSpawned = false;
+      game.c2TruckGuardsSpawned = false;
+
+      // Create weapon group (player starts armed)
+      const weaponGroup = new THREE.Group();
+      scene.add(weaponGroup);
+      game.weaponGroup = weaponGroup;
+      buildHighQualityFirstPersonWeapon(game, weaponGroup, playerClass);
+
+      // === CREATE SERGEANT BRIGGS (ally NPC) ===
+      const briggsMat = new THREE.MeshStandardMaterial({ color: 0x2d4a2d, roughness: 0.8, flatShading: true });
+      const briggsAccent = new THREE.MeshStandardMaterial({ color: 0x4a7a4a, roughness: 0.7, flatShading: true });
+      const briggs = new THREE.Group();
+      // Body
+      const bTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), briggsMat);
+      bTorso.position.y = 1.1; bTorso.castShadow = true; briggs.add(bTorso);
+      // Head
+      const bHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true }));
+      bHead.position.y = 1.7; bHead.castShadow = true; briggs.add(bHead);
+      // Beret
+      const bBeret = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.4), new THREE.MeshStandardMaterial({ color: 0x1a3a1a, roughness: 0.6, flatShading: true }));
+      bBeret.position.set(0.02, 1.9, -0.02); briggs.add(bBeret);
+      // Legs
+      const bLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
+      const bLeftLeg = new THREE.Mesh(bLegGeo, briggsMat); bLeftLeg.position.set(-0.15, 0.35, 0); briggs.add(bLeftLeg);
+      const bRightLeg = new THREE.Mesh(bLegGeo, briggsMat); bRightLeg.position.set(0.15, 0.35, 0); briggs.add(bRightLeg);
+      // Arms
+      const bArmGeo = new THREE.BoxGeometry(0.18, 0.65, 0.2);
+      const bLeftArm = new THREE.Mesh(bArmGeo, briggsMat); bLeftArm.position.set(-0.45, 1.05, 0); briggs.add(bLeftArm);
+      const bRightArm = new THREE.Mesh(bArmGeo, briggsMat); bRightArm.position.set(0.45, 1.05, 0); briggs.add(bRightArm);
+      // Gun
+      const bGun = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.5), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.6, roughness: 0.4 }));
+      bGun.position.set(0.45, 1.0, -0.3); briggs.add(bGun);
+      // Name tag sprite
+      const bLabelCanvas = document.createElement('canvas');
+      bLabelCanvas.width = 256; bLabelCanvas.height = 48;
+      const bCtx = bLabelCanvas.getContext('2d')!;
+      bCtx.fillStyle = 'rgba(0,0,0,0.5)'; bCtx.fillRect(0, 0, 256, 48);
+      bCtx.font = 'bold 22px monospace'; bCtx.fillStyle = '#4ade80'; bCtx.textAlign = 'center';
+      bCtx.fillText('Sgt. Briggs', 128, 32);
+      const bLabelTex = new THREE.CanvasTexture(bLabelCanvas);
+      const bLabelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: bLabelTex, transparent: true, depthTest: false }));
+      bLabelSprite.position.y = 2.3; bLabelSprite.scale.set(1.5, 0.3, 1); briggs.add(bLabelSprite);
+      briggs.position.set(1.5, 0, -4);
+      scene.add(briggs);
+      game.c2BriggsGroup = briggs;
+      game.c2BriggsPos = briggs.position.clone();
+
+      // === SPAWN 6 FOREST PATROL ENEMIES ===
+      const patrolPaths: { waypoints: THREE.Vector3[]; startPos: THREE.Vector3 }[] = [
+        { waypoints: [new THREE.Vector3(-8,0,-25), new THREE.Vector3(-3,0,-35), new THREE.Vector3(-10,0,-45)], startPos: new THREE.Vector3(-8,0,-25) },
+        { waypoints: [new THREE.Vector3(5,0,-30), new THREE.Vector3(10,0,-40), new THREE.Vector3(3,0,-50)], startPos: new THREE.Vector3(5,0,-30) },
+        { waypoints: [new THREE.Vector3(-15,0,-40), new THREE.Vector3(-8,0,-55), new THREE.Vector3(-18,0,-65)], startPos: new THREE.Vector3(-15,0,-40) },
+        { waypoints: [new THREE.Vector3(12,0,-45), new THREE.Vector3(18,0,-55), new THREE.Vector3(10,0,-65)], startPos: new THREE.Vector3(12,0,-45) },
+        { waypoints: [new THREE.Vector3(-5,0,-60), new THREE.Vector3(5,0,-70), new THREE.Vector3(-3,0,-75)], startPos: new THREE.Vector3(-5,0,-60) },
+        { waypoints: [new THREE.Vector3(15,0,-70), new THREE.Vector3(8,0,-80), new THREE.Vector3(20,0,-75)], startPos: new THREE.Vector3(15,0,-70) },
+      ];
+
+      for (let pi = 0; pi < 6; pi++) {
+        const pd = patrolPaths[pi];
+        const patrolMesh = new THREE.Group();
+        const eMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
+        const eHeadMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
+        const eTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), eMat); eTorso.position.y = 1.1; eTorso.castShadow = true; patrolMesh.add(eTorso);
+        const eHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), eHeadMat); eHead.position.y = 1.7; eHead.castShadow = true; patrolMesh.add(eHead);
+        const eLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
+        const eLL = new THREE.Mesh(eLegGeo, eMat); eLL.position.set(-0.15, 0.35, 0); patrolMesh.add(eLL);
+        const eRL = new THREE.Mesh(eLegGeo, eMat); eRL.position.set(0.15, 0.35, 0); patrolMesh.add(eRL);
+        const eGun = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.45), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5 }));
+        eGun.position.set(0.4, 1.0, -0.25); patrolMesh.add(eGun);
+        patrolMesh.position.copy(pd.startPos);
+        scene.add(patrolMesh);
+
+        const patrolBot: BotEntity = {
+          id: `c2_patrol_${pi}`,
+          name: `Enemy Soldier ${pi + 1}`,
+          position: pd.startPos.clone(),
+          velocity: new THREE.Vector3(),
+          rotationY: 0,
+          health: 80,
+          maxHealth: 80,
+          meshGroup: patrolMesh,
+          headMesh: eHead,
+          torsoMesh: eTorso,
+          leftLeg: eLL, rightLeg: eRL, leftArm: null as any, rightArm: null as any,
+          botGunMesh: eGun,
+          walkAnimPhase: 0,
+          flinchTimer: 0,
+          classConfig: CLASSES[0], // assault class stats
+          kills: 0, deaths: 0, score: 0,
+          targetEntityId: null,
+          targetSelectionTimer: 0,
+          shootCooldownRemaining: 0,
+          botClip: 30,
+          botIsReloading: false,
+          botReloadTimeRemaining: 0,
+          patrolWaypoint: pd.waypoints[0].clone(),
+          jumpTimer: 0,
+          isC2Patrol: true,
+          c2PatrolPaths: pd.waypoints,
+          c2PatrolIndex: 0,
+          c2PatrolWait: 0,
+          isTutorialDummy: false,
+          teamId: undefined,
+        };
+        game.c2PatrolBots.push(patrolBot);
+      }
+
+      // === SPAWN PRIVATE HALE & MERCER AT GATE ===
+      const makePrivate = (name: string, x: number) => {
+        const pMesh = new THREE.Group();
+        const pMat = new THREE.MeshStandardMaterial({ color: 0x2d4a2d, roughness: 0.8, flatShading: true });
+        const pHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
+        const pTorso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.75, 0.3), pMat); pTorso.position.y = 1.05; pTorso.castShadow = true; pMesh.add(pTorso);
+        const pHead = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), pHMat); pHead.position.y = 1.65; pMesh.add(pHead);
+        // Helmet
+        const pHelm = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.15, 0.38), new THREE.MeshStandardMaterial({ color: 0x3a5a3a, roughness: 0.6 }));
+        pHelm.position.y = 1.85; pMesh.add(pHelm);
+        const pLegGeo = new THREE.BoxGeometry(0.2, 0.65, 0.22);
+        const pLL = new THREE.Mesh(pLegGeo, pMat); pLL.position.set(-0.13, 0.33, 0); pMesh.add(pLL);
+        const pRL = new THREE.Mesh(pLegGeo, pMat); pRL.position.set(0.13, 0.33, 0); pMesh.add(pRL);
+        // Name tag
+        const pLC = document.createElement('canvas'); pLC.width = 256; pLC.height = 48;
+        const pCtx = pLC.getContext('2d')!;
+        pCtx.fillStyle = 'rgba(0,0,0,0.5)'; pCtx.fillRect(0, 0, 256, 48);
+        pCtx.font = 'bold 20px monospace'; pCtx.fillStyle = '#86efac'; pCtx.textAlign = 'center';
+        pCtx.fillText(name, 128, 32);
+        const pLT = new THREE.CanvasTexture(pLC);
+        const pLS = new THREE.Sprite(new THREE.SpriteMaterial({ map: pLT, transparent: true, depthTest: false }));
+        pLS.position.y = 2.2; pLS.scale.set(1.2, 0.25, 1); pMesh.add(pLS);
+        pMesh.position.set(x, 0, -13);
+        scene.add(pMesh);
+        return pMesh;
+      };
+      game.c2PrivateHaleGroup = makePrivate('Pvt. Hale', -2);
+      game.c2PrivateMercerGroup = makePrivate('Pvt. Mercer', 2);
+
+      // Initial Briggs dialogue
+      game.c2DialogueQueue.push(
+        { speaker: 'Sergeant Briggs', text: 'Keep quiet and stay close. We need to get past those patrols in the forest ahead.' },
+        { speaker: 'Sergeant Briggs', text: 'You can take them out if you want, but that will alert the base. Your call, soldier.' },
+      );
+      // Start first dialogue
+      if (game.c2DialogueQueue.length > 0) {
+        const d = game.c2DialogueQueue.shift()!;
+        game.c2DialogueSpeaker = d.speaker;
+        game.c2DialogueText = d.text;
+        game.c2DialogueCharIdx = 0;
+        game.c2DialogueLastCharTime = performance.now();
+      }
     } else {
 // 3. Rig Weapon Group to Camera (First Person Gun model)
     const weaponGroup = new THREE.Group();
@@ -1925,8 +2134,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const teamMode = isTeamMode(config.gameMode);
     const teamCfg = teamMode ? getTeamConfig(config.gameMode!) : null;
 
-    // Tutorial: skip regular bot spawning (dummies are spawned manually in stage 6)
-    if (!(config.isCampaign && config.mapId === 'tutorial')) {
+    // Tutorial & Campaign 2: skip regular bot spawning (handled by mission logic)
+    if (!(config.isCampaign && (config.mapId === 'tutorial' || config.mapId === 'campaign2'))) {
     for (let i = 0; i < (teamMode ? teamCfg!.totalBots : config.botCount); i++) {
       const bot = spawnBot(i);
 
@@ -2609,6 +2818,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       });
 
       // Collect online player hit meshes
+      // Also collect campaign2 enemies into targets
+      if (config.isCampaign && config.mapId === 'campaign2') {
+        const c2AllEnemies = [...game.c2PatrolBots, ...game.c2TruckGuardBots, ...game.c2BackupBots];
+        for (const b of c2AllEnemies) {
+          if (b.isDead || !b.meshGroup || !b.meshGroup.visible) continue;
+          b.meshGroup.traverse(child => {
+            if (child instanceof THREE.Mesh) {
+              targetMeshes.push(child);
+              if (child === b.headMesh) {
+                targets.push({ bot: b, part: 'head', mesh: child });
+              } else if (child.parent === b.meshGroup && child !== b.headMesh) {
+                targets.push({ bot: b, part: 'body', mesh: child });
+              }
+            }
+          });
+        }
+      }
       game.otherPlayers.forEach(p => {
         if (p.health <= 0 || !p.meshGroup.visible) return; // Do not hit dead online players
         if (p.headMesh) {
@@ -2846,6 +3072,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     const damageBot = (bot: BotEntity, damage: number, isHeadshot: boolean) => {
       if (bot.isDead) return;
+
+      // Campaign 2 patrol/guard bots: just reduce health, no respawn/score tracking here
+      if (bot.isC2Patrol || bot.c2IsTruckGuard) {
+        bot.health -= damage;
+        sounds.playHit();
+        onHitmarker?.('body');
+        if (bot.health <= 0) {
+          bot.isDead = true;
+          // Hide mesh
+          if (bot.meshGroup) bot.meshGroup.visible = false;
+        }
+        return;
+      }
 
       // Shield protection check for Bulwark
       let actualDamage = damage;
@@ -4803,6 +5042,286 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
+      // ===== CAMPAIGN 2: BEHIND ENEMY LINES =====
+      if (config.isCampaign && config.mapId === 'campaign2') {
+        const dt = delta;
+
+        // --- Update dialogue DOM ---
+        if (c2DialogueTextRef.current) {
+          c2DialogueTextRef.current.textContent = game.c2DialogueText.substring(0, game.c2DialogueCharIdx);
+        }
+        if (c2DialogueSpeakerRef.current) {
+          c2DialogueSpeakerRef.current.textContent = game.c2DialogueSpeaker;
+        }
+
+        // --- Dialogue typewriter ---
+        if (game.c2DialogueCharIdx < game.c2DialogueText.length) {
+          const now = performance.now();
+          if (now - game.c2DialogueLastCharTime > 35) {
+            game.c2DialogueCharIdx++;
+            game.c2DialogueLastCharTime = now;
+            sounds.playTypeSound();
+          }
+        } else if (game.c2DialogueText.length > 0 && !game.c2DialogueTimer) {
+          // Text finished typing, start dismiss timer
+          game.c2DialogueTimer = performance.now();
+        }
+        // Auto-dismiss after 4s, then show next in queue
+        if (game.c2DialogueTimer && performance.now() - game.c2DialogueTimer > 4000) {
+          game.c2DialogueTimer = null;
+          if (game.c2DialogueQueue.length > 0) {
+            const d = game.c2DialogueQueue.shift()!;
+            game.c2DialogueSpeaker = d.speaker;
+            game.c2DialogueText = d.text;
+            game.c2DialogueCharIdx = 0;
+            game.c2DialogueLastCharTime = performance.now();
+          } else {
+            game.c2DialogueText = '';
+            game.c2DialogueSpeaker = '';
+          }
+        }
+
+        // --- Briggs follows player ---
+        if (game.c2BriggsGroup) {
+          const briggsTarget = game.playerPos.clone().add(new THREE.Vector3(1.5, 0, 1.5));
+          const briggsDir = briggsTarget.clone().sub(game.c2BriggsPos);
+          const briggsDist = briggsDir.length();
+          if (briggsDist > 1.5) {
+            briggsDir.normalize().multiplyScalar(Math.min(briggsDist - 1.0, 4 * dt));
+            game.c2BriggsPos.add(briggsDir);
+          }
+          game.c2BriggsGroup.position.copy(game.c2BriggsPos);
+          // Face player direction
+          game.c2BriggsGroup.lookAt(game.playerPos.x, game.c2BriggsPos.y, game.playerPos.z);
+        }
+
+        // --- Forest patrol AI ---
+        for (const pb of game.c2PatrolBots) {
+          if (pb.health <= 0) continue;
+          const paths = pb.c2PatrolPaths!;
+          const wp = paths[pb.c2PatrolIndex!];
+          const toWp = wp.clone().sub(pb.position);
+          toWp.y = 0;
+          const wpDist = toWp.length();
+
+          if (pb.c2PatrolWait! > 0) {
+            pb.c2PatrolWait! -= dt;
+            continue;
+          }
+
+          if (wpDist < 1.5) {
+            // Reached waypoint, go to next
+            pb.c2PatrolIndex! = (pb.c2PatrolIndex! + 1) % paths.length;
+            pb.c2PatrolWait = 1.5 + Math.random() * 2; // Wait 1.5-3.5s
+            continue;
+          }
+
+          // Move toward waypoint
+          toWp.normalize().multiplyScalar(3 * dt);
+          pb.position.add(toWp);
+          pb.meshGroup.position.copy(pb.position);
+          pb.rotationY = Math.atan2(toWp.x, toWp.z);
+          pb.meshGroup.rotation.y = pb.rotationY;
+          // Walk animation
+          pb.walkAnimPhase = (pb.walkAnimPhase + dt * 6) % (Math.PI * 2);
+          if (pb.leftLeg) pb.leftLeg.position.y = 0.35 + Math.sin(pb.walkAnimPhase) * 0.08;
+          if (pb.rightLeg) pb.rightLeg.position.y = 0.35 + Math.sin(pb.walkAnimPhase + Math.PI) * 0.08;
+
+          // Detect player if close and shoot
+          const toPlayer = game.playerPos.clone().sub(pb.position);
+          toPlayer.y = 0;
+          const playerDist = toPlayer.length();
+          if (playerDist < 25) {
+            // Face player
+            pb.rotationY = Math.atan2(toPlayer.x, toPlayer.z);
+            pb.meshGroup.rotation.y = pb.rotationY;
+            // Shoot at player
+            pb.shootCooldownRemaining -= dt;
+            if (pb.shootCooldownRemaining <= 0 && pb.botClip > 0) {
+              pb.shootCooldownRemaining = 0.5 + Math.random() * 0.3;
+              pb.botClip--;
+              // Simple hit check
+              if (Math.random() < 0.25) { // 25% hit chance
+                const dmg = 8 + Math.floor(Math.random() * 6);
+                game.playerHealth = Math.max(0, game.playerHealth - dmg);
+                onPlayerHealthUpdate(game.playerHealth, game.playerMaxHealth);
+                if (game.playerHealth <= 0) {
+                  game.playerIsDead = true;
+                }
+              }
+            }
+          }
+        }
+
+        // --- Truck guard AI (stationary, shoot at player) ---
+        for (const tg of game.c2TruckGuardBots) {
+          if (tg.health <= 0) continue;
+          const toPlayer = game.playerPos.clone().sub(tg.position);
+          toPlayer.y = 0;
+          const dist = toPlayer.length();
+          if (dist < 35) {
+            tg.rotationY = Math.atan2(toPlayer.x, toPlayer.z);
+            tg.meshGroup.rotation.y = tg.rotationY;
+            tg.shootCooldownRemaining -= dt;
+            if (tg.shootCooldownRemaining <= 0 && tg.botClip > 0) {
+              tg.shootCooldownRemaining = 0.8 + Math.random() * 0.5;
+              tg.botClip--;
+              if (Math.random() < 0.2) {
+                const dmg = 10 + Math.floor(Math.random() * 5);
+                game.playerHealth = Math.max(0, game.playerHealth - dmg);
+                onPlayerHealthUpdate(game.playerHealth, game.playerMaxHealth);
+                if (game.playerHealth <= 0) game.playerIsDead = true;
+              }
+            }
+          }
+        }
+
+        // --- Gate trigger: Privates dialogue ---
+        if (game.c2Stage === 0 && !game.c2GateTriggered) {
+          const gateDist = game.playerPos.distanceTo(new THREE.Vector3(0, 0, -12));
+          if (gateDist < 8) {
+            game.c2GateTriggered = true;
+            game.c2Stage = 1;
+            // Privates speak
+            game.c2DialogueQueue = [];
+            game.c2DialogueSpeaker = 'Pvt. Hale & Pvt. Mercer';
+            game.c2DialogueText = 'We will hold them off until reinforcements arrive.';
+            game.c2DialogueCharIdx = 0;
+            game.c2DialogueLastCharTime = performance.now();
+            game.c2DialogueTimer = null;
+            // After privates finish, Briggs responds
+            game.c2DialogueQueue.push({
+              speaker: 'Sergeant Briggs',
+              text: "Don't listen to them, they can't hold anything off. We should find the green truck as soon as possible.",
+            });
+          }
+        }
+
+        // --- Stage 1 -> 2: After gate dialogue finishes ---
+        if (game.c2Stage === 1 && game.c2DialogueText === '' && game.c2DialogueQueue.length === 0) {
+          game.c2Stage = 2;
+          // If player killed forest enemies, spawn truck guards
+          if (game.c2ForestKills > 0 && !game.c2TruckGuardsSpawned) {
+            game.c2TruckGuardsSpawned = true;
+            const guardPositions = [
+              new THREE.Vector3(-4, 0, 40),
+              new THREE.Vector3(4, 0, 40),
+              new THREE.Vector3(-4, 0, 48),
+              new THREE.Vector3(4, 0, 48),
+            ];
+            for (let gi = 0; gi < 4; gi++) {
+              const gMesh = new THREE.Group();
+              const gMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
+              const gHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
+              const gTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), gMat); gTorso.position.y = 1.1; gTorso.castShadow = true; gMesh.add(gTorso);
+              const gHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), gHMat); gHead.position.y = 1.7; gMesh.add(gHead);
+              const gLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
+              const gLL = new THREE.Mesh(gLegGeo, gMat); gLL.position.set(-0.15, 0.35, 0); gMesh.add(gLL);
+              const gRL = new THREE.Mesh(gLegGeo, gMat); gRL.position.set(0.15, 0.35, 0); gMesh.add(gRL);
+              const gGun = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.45), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5 }));
+              gGun.position.set(0.4, 1.0, -0.25); gMesh.add(gGun);
+              gMesh.position.copy(guardPositions[gi]);
+              scene.add(gMesh);
+              const guard: BotEntity = {
+                id: `c2_guard_${gi}`, name: `Base Guard ${gi+1}`,
+                position: guardPositions[gi].clone(), velocity: new THREE.Vector3(),
+                rotationY: Math.PI, health: 100, maxHealth: 100,
+                meshGroup: gMesh, headMesh: gHead, torsoMesh: gTorso,
+                leftLeg: gLL, rightLeg: gRL, leftArm: null as any, rightArm: null as any,
+                botGunMesh: gGun, walkAnimPhase: 0, flinchTimer: 0,
+                classConfig: CLASSES[0], kills: 0, deaths: 0, score: 0,
+                targetEntityId: null, targetSelectionTimer: 0,
+                shootCooldownRemaining: 1.0, botClip: 30,
+                botIsReloading: false, botReloadTimeRemaining: 0,
+                patrolWaypoint: guardPositions[gi].clone(), jumpTimer: 0,
+                c2IsTruckGuard: true, isTutorialDummy: false, teamId: undefined,
+              };
+              game.c2TruckGuardBots.push(guard);
+            }
+          }
+        }
+
+        // --- Backup spawn: if all 6 forest patrols killed ---
+        if (game.c2ForestKills >= 6 && !game.c2BackupSpawned) {
+          game.c2BackupSpawned = true;
+          // Spawn 4 more in the forest path
+          const backupPosArr = [
+            new THREE.Vector3(-3, 0, -20), new THREE.Vector3(5, 0, -25),
+            new THREE.Vector3(-8, 0, -35), new THREE.Vector3(10, 0, -40),
+          ];
+          for (let bi = 0; bi < 4; bi++) {
+            const bMesh = new THREE.Group();
+            const bMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
+            const bHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
+            const bTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), bMat); bTorso.position.y = 1.1; bMesh.add(bTorso);
+            const bHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), bHMat); bHead.position.y = 1.7; bMesh.add(bHead);
+            const bLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
+            const bLL = new THREE.Mesh(bLegGeo, bMat); bLL.position.set(-0.15, 0.35, 0); bMesh.add(bLL);
+            const bRL = new THREE.Mesh(bLegGeo, bMat); bRL.position.set(0.15, 0.35, 0); bMesh.add(bRL);
+            bMesh.position.copy(backupPosArr[bi]);
+            scene.add(bMesh);
+            const backupBot: BotEntity = {
+              id: `c2_backup_${bi}`, name: `Reinforcement ${bi+1}`,
+              position: backupPosArr[bi].clone(), velocity: new THREE.Vector3(),
+              rotationY: 0, health: 80, maxHealth: 80,
+              meshGroup: bMesh, headMesh: bHead, torsoMesh: bTorso,
+              leftLeg: bLL, rightLeg: bRL, leftArm: null as any, rightArm: null as any,
+              botGunMesh: null as any, walkAnimPhase: 0, flinchTimer: 0,
+              classConfig: CLASSES[0], kills: 0, deaths: 0, score: 0,
+              targetEntityId: null, targetSelectionTimer: 0,
+              shootCooldownRemaining: 1, botClip: 30,
+              botIsReloading: false, botReloadTimeRemaining: 0,
+              patrolWaypoint: backupPosArr[bi].clone(), jumpTimer: 0,
+              isC2Patrol: true,
+              c2PatrolPaths: [backupPosArr[bi].clone(), game.playerPos.clone().add(new THREE.Vector3((Math.random()-0.5)*6, 0, (Math.random()-0.5)*6))],
+              c2PatrolIndex: 0, c2PatrolWait: 0,
+              isTutorialDummy: false, teamId: undefined,
+            };
+            game.c2BackupBots.push(backupBot);
+          }
+          game.c2DialogueQueue.push({ speaker: 'Sergeant Briggs', text: 'They called for backup! Stay sharp, soldier!' });
+          if (game.c2DialogueText === '' && game.c2DialogueQueue.length === 1) {
+            const d = game.c2DialogueQueue.shift()!;
+            game.c2DialogueSpeaker = d.speaker;
+            game.c2DialogueText = d.text;
+            game.c2DialogueCharIdx = 0;
+            game.c2DialogueLastCharTime = performance.now();
+            game.c2DialogueTimer = null;
+          }
+        }
+
+        // --- Truck objective: reach the truck to win ---
+        if (game.c2Stage === 2) {
+          const truckDist = game.playerPos.distanceTo(new THREE.Vector3(0, 0, 45));
+          // Check if all truck guards are dead (if any spawned)
+          const allGuardsDead = game.c2TruckGuardBots.every(g => g.health <= 0);
+          if (truckDist < 4 && allGuardsDead) {
+            game.c2Stage = 3;
+            // Victory!
+            clearInterval(timerInterval);
+            sounds.playMatchEnd(true);
+            game.c2DialogueSpeaker = '';
+            game.c2DialogueText = '';
+            onMatchEnd([{
+              id: 'player', name: playerName, isBot: false, classId: playerClass.id,
+              kills: game.playerKills, deaths: game.playerDeaths, assists: 0,
+              score: 200 + game.playerKills * 50, headshots: game.playerHeadshots || 0,
+              timePlayedSeconds: Math.floor(game.playerTimePlayedSeconds || 0),
+            }]);
+          }
+        }
+
+        // --- Track patrol/backup bot deaths for c2ForestKills ---
+        for (const pb of [...game.c2PatrolBots, ...game.c2BackupBots]) {
+          if (pb.health <= 0 && !pb.deaths) {
+            pb.deaths = 1;
+            game.c2ForestKills++;
+            game.playerKills++;
+            game.playerScore += 50;
+          }
+        }
+      }
+
       // Render Next Frame
       if (game.renderer && game.scene && game.camera && !someoneWon) {
         game.renderer.render(game.scene, game.camera);
@@ -4990,6 +5509,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
           <div className="bg-black/70 border border-emerald-500/50 backdrop-blur-sm px-6 py-3 rounded-xl">
             <p ref={tutTextRef} className="text-emerald-300 font-mono text-lg text-center min-w-[300px] whitespace-nowrap"></p>
+          </div>
+        </div>
+      )}
+
+      {/* Campaign 2 dialogue overlay */}
+      {config.isCampaign && config.mapId === 'campaign2' && (
+        <div className="absolute bottom-24 left-8 z-40 pointer-events-none">
+          <div className="bg-black/75 border border-emerald-600/50 backdrop-blur-sm px-5 py-3 rounded-xl max-w-md">
+            <p ref={c2DialogueSpeakerRef} className="text-emerald-400 font-mono text-sm font-bold mb-1 min-h-[20px]"></p>
+            <p ref={c2DialogueTextRef} className="text-emerald-200 font-mono text-base min-h-[24px]"></p>
+          </div>
+        </div>
+      )}
+
+      {/* Campaign 2 objective marker */}
+      {config.isCampaign && config.mapId === 'campaign2' && gameRef.current.c2Stage < 3 && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+          <div className="bg-black/60 border border-yellow-500/40 backdrop-blur-sm px-4 py-2 rounded-lg">
+            <p className="text-yellow-300 font-mono text-sm text-center">
+              {gameRef.current.c2Stage === 0 ? 'Objective: Sneak through the forest or eliminate patrols' :
+               gameRef.current.c2Stage === 1 ? 'Objective: Follow Briggs through the gate' :
+               gameRef.current.c2Stage === 2 ? (gameRef.current.c2ForestKills > 0 ? 'Objective: Eliminate guards and reach the green truck' : 'Objective: Reach the green truck') : ''}
+            </p>
           </div>
         </div>
       )}
