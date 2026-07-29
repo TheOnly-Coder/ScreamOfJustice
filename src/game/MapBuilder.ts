@@ -1246,9 +1246,9 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     sky.position.set(0, 0, 20);
     scene.add(sky);
 
-    // Spawn point (at gate entrance, player enters the base)
+    // Spawn point (in the forest, player works north toward gate then base)
     spawnPoints.push(
-      new THREE.Vector3(0, 1.5, -5)
+      new THREE.Vector3(0, 1.5, -75)
     );
   }
 
