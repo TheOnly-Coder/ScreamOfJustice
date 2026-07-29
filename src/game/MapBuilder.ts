@@ -1042,22 +1042,22 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     );
   } else if (mapId === 'campaign2') {
     // CAMPAIGN MISSION 2: "Behind Enemy Lines"
-    // Layout: Forest (z: -80 to -10) -> Gate (z: -10) -> Military Base (z: -10 to 50)
+    // Layout: Forest (z: -80 to -10) -> Gate (z: -10) -> Military Base (z: -8 to 120)
     // Player starts at z=60 (south end of base), truck at z=45
     // Forest patrol enemies in z: -80 to -15
-    // Gate privates at z=-10, truck at z=45
+    // Gate privates at z=-10, truck hidden behind building at z=100
 
     ambientColor = '#4a6741';
     directionalColor = '#ffe4b5';
     fogColor = '#1a2e1a';
-    fogDensity = 0.008;
+    fogDensity = 0.006;
 
     // === GROUND PLANE ===
-    const groundGeo = new THREE.PlaneGeometry(200, 200);
+    const groundGeo = new THREE.PlaneGeometry(300, 300);
     const grassMat = new THREE.MeshStandardMaterial({ color: 0x2d5a1e, roughness: 0.95, flatShading: true });
     const ground = new THREE.Mesh(groundGeo, grassMat);
     ground.rotation.x = -Math.PI / 2;
-    ground.position.set(0, 0, -15);
+    ground.position.set(0, 0, 20);
     ground.receiveShadow = true;
     scene.add(ground);
 
@@ -1114,32 +1114,76 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     createCrate([-10, 1.5, -12], [8, 3, 0.5], 0x4a4a4a, 0, 'wall');
     createCrate([10, 1.5, -12], [8, 3, 0.5], 0x4a4a4a, 0, 'wall');
 
-    // === MILITARY BASE (z: -8 to 50) ===
-    // Base perimeter walls
-    createCrate([-20, 2, 20], [0.5, 4, 60], 0x5c5c5c, 0, 'wall'); // West wall
-    createCrate([20, 2, 20], [0.5, 4, 60], 0x5c5c5c, 0, 'wall');  // East wall
-    createCrate([0, 2, 50], [40.5, 4, 0.5], 0x5c5c5c, 0, 'wall');  // North wall
-    createCrate([0, 2, -8], [40.5, 4, 0.5], 0x5c5c5c, 0, 'wall');  // South wall (with gap for gate)
-    // Patch wall segments around gate opening (gap from x=-5 to x=5)
-    createCrate([-12.5, 2, -8], [15, 4, 0.5], 0x5c5c5c, 0, 'wall');
-    createCrate([12.5, 2, -8], [15, 4, 0.5], 0x5c5c5c, 0, 'wall');
+    // === EXPANDED MILITARY BASE (z: -8 to 120, x: -50 to 50) ===
+    const BASE_W = 100; // total width (-50 to 50)
+    const BASE_D = 128; // total depth (-8 to 120)
+    const BASE_HW = BASE_W / 2; // 50
 
-    // Base buildings / structures
-    createCrate([-14, 1.5, 10], [6, 3, 5], 0x6b705c, 0, 'crate');  // Building 1
-    createCrate([14, 1.5, 10], [6, 3, 5], 0x6b705c, 0, 'crate');   // Building 2
-    createCrate([-14, 1.5, 30], [6, 3, 5], 0x6b705c, 0, 'crate');  // Building 3
-    createCrate([14, 1.5, 30], [6, 3, 5], 0x6b705c, 0, 'crate');   // Building 4
-    // Cover crates scattered in base
-    createCrate([-5, 0.5, 15], [1, 1, 1], 0x78716c, 0, 'crate');
-    createCrate([5, 0.5, 25], [1, 1, 1], 0x78716c, 0, 'crate');
-    createCrate([0, 0.5, 35], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+    // Base perimeter walls — south wall with GAP for gate (x: -5 to 5)
+    createCrate([-(BASE_HW + 5) / 2, 2, -8], [(BASE_HW - 5), 4, 0.5], 0x5c5c5c, 0, 'wall'); // Left segment: x=-50 to x=-5
+    createCrate([(BASE_HW + 5) / 2, 2, -8], [(BASE_HW - 5), 4, 0.5], 0x5c5c5c, 0, 'wall');  // Right segment: x=5 to x=50
+    // West wall
+    createCrate([-BASE_HW, 2, 56], [0.5, 4, BASE_D], 0x5c5c5c, 0, 'wall');
+    // East wall
+    createCrate([BASE_HW, 2, 56], [0.5, 4, BASE_D], 0x5c5c5c, 0, 'wall');
+    // North wall
+    createCrate([0, 2, 120], [BASE_W + 0.5, 4, 0.5], 0x5c5c5c, 0, 'wall');
 
-    // === GREEN TRUCK (objective, z=45) ===
+    // === INNER STRUCTURES ===
+    // Entry courtyard area (z: -5 to 15) — open with a few low cover crates
+    createCrate([-8, 0.5, 5], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+    createCrate([10, 0.5, 8], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+    createCrate([3, 0.5, 12], [1, 1, 1], 0x78716c, 0, 'crate');
+
+    // --- Central barracks / warehouse (z: 15 to 40) — large building blocking line of sight ---
+    createCrate([-15, 2.5, 28], [16, 5, 22], 0x5a5a5a, 0, 'wall');  // Left warehouse
+    createCrate([20, 2.5, 28], [14, 5, 22], 0x5a5a5a, 0, 'wall');   // Right warehouse
+    // Warehouse doors (small openings on the north side)
+    // Left warehouse interior detail
+    createCrate([-15, 0.5, 22], [2, 1, 2], 0x78716c, 0, 'crate');
+    createCrate([-10, 0.5, 34], [2, 1, 2], 0x78716c, 0, 'crate');
+    // Right warehouse interior detail
+    createCrate([18, 0.5, 25], [2, 1, 2], 0x78716c, 0, 'crate');
+    createCrate([23, 0.5, 32], [2, 1, 2], 0x78716c, 0, 'crate');
+
+    // --- Mid-base section (z: 45 to 70) ---
+    createCrate([-30, 2, 55], [10, 4, 16], 0x6b705c, 0, 'crate');  // West building
+    createCrate([30, 2, 55], [10, 4, 16], 0x6b705c, 0, 'crate');   // East building
+    createCrate([0, 1.5, 50], [6, 3, 8], 0x6b705c, 0, 'crate');     // Central small building
+
+    // Scattered cover in mid-base
+    createCrate([-20, 0.5, 45], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+    createCrate([15, 0.5, 48], [1, 1, 1], 0x78716c, 0, 'crate');
+    createCrate([-5, 0.5, 60], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+    createCrate([8, 0.5, 65], [1, 1, 1], 0x78716c, 0, 'crate');
+    createCrate([-35, 0.5, 70], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+    createCrate([38, 0.5, 68], [1, 1, 1], 0x78716c, 0, 'crate');
+
+    // --- North section (z: 75 to 110) — truck area behind large building ---
+    // Large vehicle depot / hangar building blocking view from south
+    createCrate([0, 3.5, 85], [30, 7, 20], 0x555555, 0, 'wall');   // Big hangar
+
+    // Side buildings near truck area
+    createCrate([-35, 2, 90], [12, 4, 14], 0x6b705c, 0, 'crate'); // NW building
+    createCrate([35, 2, 95], [12, 4, 14], 0x6b705c, 0, 'crate');  // NE building
+
+    // Cover near truck
+    createCrate([-8, 0.5, 100], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+    createCrate([10, 0.5, 105], [1, 1, 1], 0x78716c, 0, 'crate');
+    createCrate([-3, 0.5, 108], [1.5, 1, 1.5], 0x78716c, 0, 'crate');
+
+    // Fence sections along perimeter interior
+    createCrate([-40, 1.5, 30], [0.3, 3, 20], 0x4a4a4a, 0, 'wall');
+    createCrate([40, 1.5, 40], [0.3, 3, 20], 0x4a4a4a, 0, 'wall');
+    createCrate([-40, 1.5, 80], [0.3, 3, 20], 0x4a4a4a, 0, 'wall');
+    createCrate([40, 1.5, 75], [0.3, 3, 20], 0x4a4a4a, 0, 'wall');
+
+    // === GREEN TRUCK (objective) — hidden behind the hangar at z=100 ===
     const truckBody = new THREE.Mesh(
       new THREE.BoxGeometry(2.5, 1.5, 5),
       new THREE.MeshStandardMaterial({ color: 0x2d6a2d, roughness: 0.7, flatShading: true })
     );
-    truckBody.position.set(0, 1.2, 45);
+    truckBody.position.set(0, 1.2, 100);
     truckBody.castShadow = true;
     scene.add(truckBody);
     // Truck cab
@@ -1147,13 +1191,13 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
       new THREE.BoxGeometry(2.5, 1.5, 2),
       new THREE.MeshStandardMaterial({ color: 0x256b25, roughness: 0.7, flatShading: true })
     );
-    truckCab.position.set(0, 2.2, 47);
+    truckCab.position.set(0, 2.2, 102);
     truckCab.castShadow = true;
     scene.add(truckCab);
     // Truck wheels
     const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 8);
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9, flatShading: true });
-    [[-1.4, 0.4, 43], [1.4, 0.4, 43], [-1.4, 0.4, 47.5], [1.4, 0.4, 47.5]].forEach(([wx, wy, wz]) => {
+    [[-1.4, 0.4, 98], [1.4, 0.4, 98], [-1.4, 0.4, 102.5], [1.4, 0.4, 102.5]].forEach(([wx, wy, wz]) => {
       const wheel = new THREE.Mesh(wheelGeo, wheelMat);
       wheel.rotation.z = Math.PI / 2;
       wheel.position.set(wx, wy, wz);
@@ -1164,7 +1208,7 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
       new THREE.BoxGeometry(2.3, 0.1, 3),
       new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.9, flatShading: true })
     );
-    truckBed.position.set(0, 2.0, 44.5);
+    truckBed.position.set(0, 2.0, 99.5);
     scene.add(truckBed);
 
     // === LIGHTING ===
@@ -1175,28 +1219,31 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     const dirLight = new THREE.DirectionalLight(0xffe4b5, 1.2);
     dirLight.position.set(20, 30, -30);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 1024;
-    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
     dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 150;
-    dirLight.shadow.camera.left = -50;
-    dirLight.shadow.camera.right = 50;
-    dirLight.shadow.camera.top = 50;
-    dirLight.shadow.camera.bottom = -100;
+    dirLight.shadow.camera.far = 250;
+    dirLight.shadow.camera.left = -80;
+    dirLight.shadow.camera.right = 80;
+    dirLight.shadow.camera.top = 80;
+    dirLight.shadow.camera.bottom = -120;
     scene.add(dirLight);
     // Base area lights
-    const baseLight1 = new THREE.PointLight(0xffcc80, 0.8, 40);
-    baseLight1.position.set(0, 6, 20);
+    const baseLight1 = new THREE.PointLight(0xffcc80, 0.8, 60);
+    baseLight1.position.set(0, 6, 30);
     scene.add(baseLight1);
-    const baseLight2 = new THREE.PointLight(0xffcc80, 0.5, 30);
-    baseLight2.position.set(0, 6, 40);
+    const baseLight2 = new THREE.PointLight(0xffcc80, 0.5, 50);
+    baseLight2.position.set(0, 6, 70);
     scene.add(baseLight2);
+    const baseLight3 = new THREE.PointLight(0xffcc80, 0.6, 40);
+    baseLight3.position.set(0, 6, 100);
+    scene.add(baseLight3);
 
     // Sky dome (simple)
-    const skyGeo = new THREE.SphereGeometry(100, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    const skyGeo = new THREE.SphereGeometry(150, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
     const skyMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide });
     const sky = new THREE.Mesh(skyGeo, skyMat);
-    sky.position.set(0, 0, -15);
+    sky.position.set(0, 0, 20);
     scene.add(sky);
 
     // Spawn point (south end of base, near gate entrance)

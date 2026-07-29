@@ -5084,15 +5084,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // --- Briggs follows player ---
         if (game.c2BriggsGroup) {
           const briggsTarget = game.playerPos.clone().add(new THREE.Vector3(1.5, 0, 1.5));
+          briggsTarget.y = 0; // Keep Briggs grounded
           const briggsDir = briggsTarget.clone().sub(game.c2BriggsPos);
+          briggsDir.y = 0; // Only move horizontally
           const briggsDist = briggsDir.length();
           if (briggsDist > 1.5) {
             briggsDir.normalize().multiplyScalar(Math.min(briggsDist - 1.0, 4 * dt));
             game.c2BriggsPos.add(briggsDir);
           }
+          game.c2BriggsPos.y = 0; // Clamp to ground
           game.c2BriggsGroup.position.copy(game.c2BriggsPos);
           // Face player direction
-          game.c2BriggsGroup.lookAt(game.playerPos.x, game.c2BriggsPos.y, game.playerPos.z);
+          game.c2BriggsGroup.lookAt(game.playerPos.x, 0, game.playerPos.z);
         }
 
         // --- Forest patrol AI ---
@@ -5204,10 +5207,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (game.c2ForestKills > 0 && !game.c2TruckGuardsSpawned) {
             game.c2TruckGuardsSpawned = true;
             const guardPositions = [
-              new THREE.Vector3(-4, 0, 40),
-              new THREE.Vector3(4, 0, 40),
-              new THREE.Vector3(-4, 0, 48),
-              new THREE.Vector3(4, 0, 48),
+              new THREE.Vector3(-4, 0, 95),
+              new THREE.Vector3(4, 0, 95),
+              new THREE.Vector3(-4, 0, 103),
+              new THREE.Vector3(4, 0, 103),
             ];
             for (let gi = 0; gi < 4; gi++) {
               const gMesh = new THREE.Group();
@@ -5292,7 +5295,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // --- Truck objective: reach the truck to win ---
         if (game.c2Stage === 2) {
-          const truckDist = game.playerPos.distanceTo(new THREE.Vector3(0, 0, 45));
+          const truckDist = game.playerPos.distanceTo(new THREE.Vector3(0, 0, 100));
           // Check if all truck guards are dead (if any spawned)
           const allGuardsDead = game.c2TruckGuardBots.every(g => g.health <= 0);
           if (truckDist < 4 && allGuardsDead) {
