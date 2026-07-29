@@ -653,7 +653,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     tutReloadStageDone: boolean;
     tutAmmoPickedUp: boolean;
     tutEndTimer: number | null;
-    tutStage7ReserveAtEnter: number;
+    tutStage7ReserveAtEnter: number; // tracks clip+reserve total when stage 7 starts
 
     wantsToFire: boolean;
 
@@ -4756,15 +4756,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Stage 6: Shoot the enemy (handled in damageBot on kill)
 
-        // Stage 7: Reload + pick up ammo — detect ammo increase
+        // Stage 7: Reload + pick up ammo — detect total ammo increase
         if (game.tutStage === 7 && !game.tutActionDone) {
           if (!game.tutAmmoPickedUp) {
             game.tutAmmoPickedUp = true;
             game.tutEndTimer = null;
-            game.tutStage7ReserveAtEnter = game.playerReserve;
+            // Sync primaryAmmo.reserve with playerReserve so pickups actually increase it
+            game.primaryAmmo.reserve = game.playerReserve;
+            game.tutStage7ReserveAtEnter = game.playerClip + game.playerReserve;
           }
-          // Advance if reserve ammo increased (from ammo pack pickup or kill award)
-          if (game.playerReserve > (game.tutStage7ReserveAtEnter ?? 0)) {
+          // Advance if total ammo (clip + reserve) increased from ammo pack pickup
+          const currentTotal = game.playerClip + game.playerReserve;
+          if (currentTotal > (game.tutStage7ReserveAtEnter ?? 0)) {
             game.tutStage = 8;
             game.tutText = 'Outstanding, Recruit. You have completed basic training. You are ready for combat, soldier.';
             game.tutCharIdx = 0;
@@ -4780,6 +4783,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (!game.tutEndTimer) game.tutEndTimer = performance.now();
             if (performance.now() - game.tutEndTimer > 1000) {
               game.tutActionDone = true;
+              endMatch();
             }
           }
         }
