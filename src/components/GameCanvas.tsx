@@ -1735,6 +1735,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       game.c2GateTriggered = false;
       game.c2BackupSpawned = false;
       game.c2TruckGuardsSpawned = false;
+      game.yaw = Math.PI; // Face north toward gate/base
 
       // Create weapon group (player starts armed)
       const weaponGroup = new THREE.Group();
