@@ -4783,7 +4783,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (!game.tutEndTimer) game.tutEndTimer = performance.now();
             if (performance.now() - game.tutEndTimer > 1000) {
               game.tutActionDone = true;
-              endMatch();
+              // Bypass endMatch() which returns early for campaign maps
+              clearInterval(timerInterval);
+              sounds.playMatchEnd(true);
+              onMatchEnd([{
+                id: 'player',
+                name: playerName,
+                isBot: false,
+                classId: playerClass.id,
+                kills: 1,
+                deaths: 0,
+                assists: 0,
+                score: 100,
+                headshots: 0,
+                timePlayedSeconds: Math.floor(game.playerTimePlayedSeconds || 0),
+              }]);
             }
           }
         }
