@@ -414,6 +414,44 @@ export default function App() {
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
       setGameState('PLAYING');
+    } else if (chapter === 3) {
+      // Chapter 3: Cutscene - The Road Home (no gameplay, just cinematics)
+      const cutsceneConfig: MatchConfig = {
+        mapId: 'campaign3',
+        timeLimit: 600,
+        scoreLimit: 99,
+        botCount: 0,
+        difficulty: 'EASY',
+        gameMode: 'FFA',
+        isCampaign: true,
+      };
+      const cutsceneClass: CharacterClass = {
+        id: 'campaign3_cutscene',
+        name: 'Cutscene',
+        codename: 'CS',
+        description: 'Campaign Mission 3 cutscene.',
+        primaryWeapon: WEAPONS.m4_assault,
+        secondaryWeapon: WEAPONS.mw11_pistol,
+        maxHealth: 100,
+        speed: 1.0,
+        color: '#1a1a1a',
+        accentColor: '#ff8844',
+        ability: { name: 'None', description: '', cooldown: 999 },
+      };
+      setMatchConfig(cutsceneConfig);
+      setPlayerClass(cutsceneClass);
+      setPlayerName(user?.username || 'Recruit_Soldier');
+      setGameMode('FFA');
+      setTeamScores([]);
+      setPlayerHealth(cutsceneClass.maxHealth);
+      setPlayerMaxHealth(cutsceneClass.maxHealth);
+      setPlayerClip(cutsceneClass.primaryWeapon.maxAmmo);
+      setPlayerReserve(0);
+      setMatchTimeLeft(600);
+      setAbilityCooldownLeft(0);
+      setKillFeed([]);
+      touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
+      setGameState('PLAYING');
     }
   };
 
@@ -498,7 +536,7 @@ export default function App() {
             touchInputsRef={touchInputsRef}
             useTouchControls={useTouchControls}
           />
-          {!matchConfig?.spectatorMode && <GameHUD
+          {!matchConfig?.spectatorMode && !(matchConfig?.isCampaign && matchConfig?.mapId === 'campaign3') && <GameHUD
             graphicsQuality={graphicsQuality}
             onGraphicsChange={setGraphicsQuality}
             stats={stats}

@@ -13,7 +13,7 @@ export function ChapterSelect({ onBack, onStartChapter }: Props) {
   const chapters = [
     { num: 1, x: 12, y: 15, unlocked: true },
     { num: 2, x: 30, y: 30, unlocked: true },
-    { num: 3, x: 18, y: 50, unlocked: false },
+    { num: 3, x: 18, y: 50, unlocked: true },
     { num: 4, x: 35, y: 65, unlocked: false },
     { num: 5, x: 55, y: 15, unlocked: false },
     { num: 6, x: 70, y: 35, unlocked: false },

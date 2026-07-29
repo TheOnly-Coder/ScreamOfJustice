@@ -16,7 +16,7 @@ export interface MapData {
   fogDensity: number;
 }
 
-export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo' | 'tutorial' | 'campaign2'): MapData {
+export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo' | 'tutorial' | 'campaign2' | 'campaign3'): MapData {
   const colliders: CollidableBox[] = [];
   const spawnPoints: THREE.Vector3[] = [];
 
@@ -1249,6 +1249,219 @@ export function buildMap(scene: THREE.Scene, mapId: 'shipment' | 'rust' | 'dust2
     // Spawn point (in the forest, player works north toward gate then base)
     spawnPoints.push(
       new THREE.Vector3(0, 1.5, -75)
+    );
+  } else if (mapId === 'campaign3') {
+    // CAMPAIGN 3: CUTSCENE - "The Road Home"
+    // Ruined city with broken buildings, dirty road, orange sunset
+
+    ambientColor = '#ff8844';
+    directionalColor = '#ffaa55';
+    fogColor = '#cc6622';
+    fogDensity = 0.003;
+
+    // === GROUND / DIRTY ROAD ===
+    const groundGeo = new THREE.PlaneGeometry(400, 600);
+    const dirtRoadMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 0.95, flatShading: true });
+    const ground = new THREE.Mesh(groundGeo, dirtRoadMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.set(0, 0, 0);
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Road surface (darker strip down the center)
+    const roadGeo = new THREE.PlaneGeometry(6, 500);
+    const roadMat = new THREE.MeshStandardMaterial({ color: 0x3a3228, roughness: 0.9, flatShading: true });
+    const road = new THREE.Mesh(roadGeo, roadMat);
+    road.rotation.x = -Math.PI / 2;
+    road.position.set(0, 0.02, 100);
+    road.receiveShadow = true;
+    scene.add(road);
+
+    // === SKY DOME (orange sunset) ===
+    const skyGeo = new THREE.SphereGeometry(200, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const skyMat = new THREE.MeshBasicMaterial({ color: 0xff7733, side: THREE.BackSide });
+    const sky = new THREE.Mesh(skyGeo, skyMat);
+    sky.position.set(0, 0, 100);
+    scene.add(sky);
+
+    // === SUN ===
+    const sunGeo = new THREE.CircleGeometry(12, 32);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+    const sun = new THREE.Mesh(sunGeo, sunMat);
+    sun.position.set(30, 18, -150);
+    scene.add(sun);
+    // Sun glow
+    const glowGeo = new THREE.CircleGeometry(22, 32);
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0xff9944, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.position.copy(sun.position);
+    scene.add(glow);
+
+    // === BROKEN BUILDINGS ===
+    const buildingMat = new THREE.MeshStandardMaterial({ color: 0x555050, roughness: 0.85, flatShading: true });
+    const buildingDarkMat = new THREE.MeshStandardMaterial({ color: 0x3a3838, roughness: 0.9, flatShading: true });
+    const glassMat = new THREE.MeshStandardMaterial({ color: 0x88aacc, roughness: 0.1, metalness: 0.8, transparent: true, opacity: 0.3 });
+    const concreteMat = new THREE.MeshStandardMaterial({ color: 0x666060, roughness: 0.9, flatShading: true });
+
+    const buildingDefs: { x: number; z: number; w: number; h: number; d: number; damaged: boolean }[] = [
+      // Left side buildings
+      { x: -20, z: -60, w: 12, h: 18, d: 10, damaged: true },
+      { x: -25, z: -20, w: 14, h: 22, d: 12, damaged: false },
+      { x: -18, z: 30, w: 10, h: 15, d: 10, damaged: true },
+      { x: -22, z: 80, w: 16, h: 25, d: 14, damaged: false },
+      { x: -28, z: 140, w: 11, h: 20, d: 10, damaged: true },
+      { x: -15, z: 200, w: 13, h: 17, d: 11, damaged: false },
+      // Right side buildings
+      { x: 22, z: -50, w: 11, h: 20, d: 10, damaged: true },
+      { x: 26, z: 10, w: 15, h: 24, d: 13, damaged: false },
+      { x: 20, z: 60, w: 12, h: 16, d: 10, damaged: true },
+      { x: 24, z: 120, w: 14, h: 21, d: 12, damaged: false },
+      { x: 19, z: 180, w: 10, h: 19, d: 10, damaged: true },
+      { x: 27, z: 240, w: 13, h: 23, d: 11, damaged: false },
+      // Background buildings (further back, larger)
+      { x: -45, z: -40, w: 18, h: 30, d: 15, damaged: true },
+      { x: 48, z: 0, w: 20, h: 28, d: 16, damaged: true },
+      { x: -50, z: 100, w: 16, h: 26, d: 14, damaged: false },
+      { x: 52, z: 160, w: 18, h: 32, d: 15, damaged: true },
+    ];
+
+    for (const b of buildingDefs) {
+      const mat = b.damaged ? buildingDarkMat : buildingMat;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), mat);
+      body.position.set(b.x, b.h / 2, b.z);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      scene.add(body);
+
+      // Window frames (missing glass = just dark rectangles)
+      const windowRows = Math.floor(b.h / 4);
+      const windowCols = Math.max(1, Math.floor(b.w / 3.5));
+      for (let row = 0; row < windowRows; row++) {
+        for (let col = 0; col < windowCols; col++) {
+          const wx = b.x - b.w / 2 + 1.5 + col * (b.w - 2) / Math.max(windowCols - 1, 1);
+          const wy = 2.5 + row * 4;
+          const wz = b.z + b.d / 2 + 0.05;
+
+          if (b.damaged && Math.random() > 0.3) {
+            // Missing glass - dark void with some broken glass shards
+            const voidMesh = new THREE.Mesh(
+              new THREE.PlaneGeometry(1.2, 1.8),
+              new THREE.MeshBasicMaterial({ color: 0x111111 })
+            );
+            voidMesh.position.set(wx, wy, wz);
+            scene.add(voidMesh);
+            // Random glass shard
+            if (Math.random() > 0.5) {
+              const shard = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.4, 0.6),
+                glassMat
+              );
+              shard.position.set(wx + (Math.random() - 0.5) * 0.5, wy + (Math.random() - 0.5) * 0.5, wz + 0.02);
+              shard.rotation.z = (Math.random() - 0.5) * 0.5;
+              scene.add(shard);
+            }
+          } else if (!b.damaged && Math.random() > 0.6) {
+            // Some intact windows
+            const win = new THREE.Mesh(
+              new THREE.PlaneGeometry(1.2, 1.8),
+              glassMat
+            );
+            win.position.set(wx, wy, wz);
+            scene.add(win);
+          }
+        }
+      }
+
+      // Damaged buildings get broken top edges
+      if (b.damaged) {
+        const rubbleGeo = new THREE.BoxGeometry(b.w * 0.8, 1.5, b.d * 0.8);
+        const rubble = new THREE.Mesh(rubbleGeo, concreteMat);
+        rubble.position.set(b.x + (Math.random() - 0.5) * 2, b.h + 0.75, b.z);
+        rubble.rotation.y = Math.random() * 0.3;
+        rubble.castShadow = true;
+        scene.add(rubble);
+      }
+    }
+
+    // === DEBRIS ON ROAD ===
+    const debrisMat = new THREE.MeshStandardMaterial({ color: 0x4a4040, roughness: 0.9, flatShading: true });
+    const debrisPositions: [number, number, number, number, number, number][] = [
+      [-1.5, 0.3, -30, 1.2, 0.6, 0.8],
+      [2, 0.2, 20, 0.8, 0.4, 1.0],
+      [-0.5, 0.4, 70, 1.5, 0.8, 0.6],
+      [1, 0.15, 130, 0.6, 0.3, 0.5],
+      [-2, 0.35, 190, 1.0, 0.7, 0.9],
+      [0.5, 0.25, -70, 0.9, 0.5, 0.7],
+      [-1, 0.3, 250, 1.1, 0.6, 0.8],
+    ];
+    for (const [dx, dy, dz, dw, dh, dd] of debrisPositions) {
+      const debris = new THREE.Mesh(new THREE.BoxGeometry(dw, dh, dd), debrisMat);
+      debris.position.set(dx, dy, dz);
+      debris.rotation.y = Math.random() * Math.PI;
+      debris.castShadow = true;
+      scene.add(debris);
+    }
+
+    // === OVERTURNED CAR ===
+    const carBodyMat = new THREE.MeshStandardMaterial({ color: 0x443322, roughness: 0.7, metalness: 0.3, flatShading: true });
+    const carBody = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.2, 4.5), carBodyMat);
+    carBody.position.set(4, 0.8, -10);
+    carBody.rotation.z = 0.3;
+    carBody.rotation.y = 0.4;
+    carBody.castShadow = true;
+    scene.add(carBody);
+
+    // === LIGHTING ===
+    const ambLight = new THREE.AmbientLight(0xff8844, 0.6);
+    scene.add(ambLight);
+    const dirLight = new THREE.DirectionalLight(0xffaa55, 1.2);
+    dirLight.position.set(30, 30, -100);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.left = -80;
+    dirLight.shadow.camera.right = 80;
+    dirLight.shadow.camera.top = 80;
+    dirLight.shadow.camera.bottom = -80;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    scene.add(dirLight);
+    // Warm fill light from sun side
+    const fillLight = new THREE.DirectionalLight(0xff6600, 0.4);
+    fillLight.position.set(50, 10, -200);
+    scene.add(fillLight);
+
+    // === TRUCK MODEL (drives along the road) ===
+    const truckGroup = new THREE.Group();
+    const truckCabMat = new THREE.MeshStandardMaterial({ color: 0x3a4a2a, roughness: 0.8, flatShading: true });
+    const truckBedMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 0.85, flatShading: true });
+    // Cab
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(3, 2.5, 2.5), truckCabMat);
+    cab.position.set(0, 1.25, 1.5);
+    cab.castShadow = true;
+    truckGroup.add(cab);
+    // Windshield
+    const windshield = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.5), glassMat);
+    windshield.position.set(0, 2.0, 2.76);
+    truckGroup.add(windshield);
+    // Bed
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(3, 1.5, 4), truckBedMat);
+    bed.position.set(0, 0.75, -1.5);
+    bed.castShadow = true;
+    truckGroup.add(bed);
+    // Wheels
+    const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.3, 8);
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
+    for (const [wx, wz] of [[-1.5, 2], [1.5, 2], [-1.5, -2.5], [1.5, -2.5]]) {
+      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(wx, 0.5, wz);
+      truckGroup.add(wheel);
+    }
+    truckGroup.position.set(0, 0, -100);
+    scene.add(truckGroup);
+
+    // Spawn point (camera starts here, cutscene is automated)
+    spawnPoints.push(
+      new THREE.Vector3(0, 3, -95)
     );
   }
 

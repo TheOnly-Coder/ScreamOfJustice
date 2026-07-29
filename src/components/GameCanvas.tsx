@@ -443,6 +443,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const tutTextRef = useRef<HTMLDivElement>(null);
   const c2DialogueTextRef = useRef<HTMLDivElement>(null);
   const c2DialogueSpeakerRef = useRef<HTMLDivElement>(null);
+  const c3DialogueTextRef = useRef<HTMLDivElement>(null);
+  const c3DialogueSpeakerRef = useRef<HTMLDivElement>(null);
+  const c3FadeRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   // States
@@ -682,6 +685,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     c2TruckGuardBots: BotEntity[]; // Truck guards (if kills > 0)
     c2BackupBots: BotEntity[]; // Backup enemies
 
+    // Campaign 3 cutscene state
+    c3CutsceneTime: number;
+    c3Phase: string;
+    c3DialogueSpeaker: string;
+    c3DialogueText: string;
+    c3DialogueCharIdx: number;
+    c3DialogueLastCharTime: number;
+    c3FadeAlpha: number;
+    c3FadeDir: number;
+    c3TruckRef: THREE.Group | null;
+    c3WaitingForEnd: boolean;
+    c3EndTime: number;
+    c3DialogueQueue: { speaker: string; text: string; time: number }[];
+    c3CameraPanStarted: boolean;
+
     wantsToFire: boolean;
 
     // Match Timer
@@ -802,6 +820,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     c2PatrolBots: [],
     c2TruckGuardBots: [],
     c2BackupBots: [],
+    // Campaign 3 cutscene defaults
+    c3CutsceneTime: 0,
+    c3Phase: '',
+    c3DialogueSpeaker: '',
+    c3DialogueText: '',
+    c3DialogueCharIdx: 0,
+    c3DialogueLastCharTime: 0,
+    c3FadeAlpha: 0,
+    c3FadeDir: 0,
+    c3TruckRef: null,
+    c3WaitingForEnd: false,
+    c3EndTime: 0,
+    c3DialogueQueue: [],
+    c3CameraPanStarted: false,
     wantsToFire: false,
     matchTimeLeft: config.timeLimit,
     scoreLimit: config.scoreLimit,
@@ -1900,6 +1932,41 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         game.c2DialogueCharIdx = 0;
         game.c2DialogueLastCharTime = performance.now();
       }
+    } else if (config.isCampaign && config.mapId === 'campaign3') {
+      // ===== CAMPAIGN 3: CUTSCENE - "The Road Home" =====
+      game.hasWeapon = false;
+      game.c3CutsceneTime = 0;
+      game.c3Phase = 'truck_driving'; // truck_driving -> fade_to_city -> city_driving -> dialogue1 -> dialogue2 -> camera_sun -> dialogue3 -> end
+      game.c3DialogueSpeaker = '';
+      game.c3DialogueText = '';
+      game.c3DialogueCharIdx = 0;
+      game.c3DialogueLastCharTime = 0;
+      game.c3FadeAlpha = 1; // Start fully black (fade in)
+      game.c3FadeDir = -1; // -1 = fading in, 1 = fading out
+      game.c3TruckRef = null; // Will find the truck in scene
+      game.c3WaitingForEnd = false;
+      game.c3EndTime = 0;
+      game.c3DialogueQueue = [];
+      game.c3CameraPanStarted = false;
+
+      // Find the truck group in the scene
+      scene.traverse((child) => {
+        if (child instanceof THREE.Group && !game.c3TruckRef) {
+          // The truck is the main group added in MapBuilder
+          child.traverse((c) => {
+            if ((c as THREE.Mesh).geometry?.parameters?.width === 3 && (c as THREE.Mesh).geometry?.parameters?.height === 2.5) {
+              // Found the cab mesh, parent is the truck group
+              game.c3TruckRef = child.parent instanceof THREE.Group ? child.parent : child;
+            }
+          });
+        }
+      });
+
+      // Create weapon group (hidden for cutscene)
+      const weaponGroup = new THREE.Group();
+      scene.add(weaponGroup);
+      game.weaponGroup = weaponGroup;
+      weaponGroup.visible = false;
     } else {
 // 3. Rig Weapon Group to Camera (First Person Gun model)
     const weaponGroup = new THREE.Group();
@@ -4071,7 +4138,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       // 2. Physics & Movement for Player (Always enabled when playing, even without Pointer Lock)
-      if (!game.playerIsDead) {
+      // Skip for campaign3 cutscene (camera is controlled by cutscene logic)
+      if (!game.playerIsDead && !(config.isCampaign && config.mapId === 'campaign3')) {
         // Integrate low-latency virtual touchscreen looking and key maps
         if (useTouchControls && touchInputsRef && touchInputsRef.current) {
           const touchInput = touchInputsRef.current;
@@ -5339,6 +5407,151 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
+      // ===== CAMPAIGN 3: CUTSCENE - "The Road Home" =====
+      if (config.isCampaign && config.mapId === 'campaign3') {
+        const dt = delta;
+        game.c3CutsceneTime += dt;
+        const t = game.c3CutsceneTime;
+
+        // --- Fade update ---
+        if (game.c3FadeDir !== 0) {
+          game.c3FadeAlpha += game.c3FadeDir * dt * 1.2;
+          if (game.c3FadeAlpha <= 0) { game.c3FadeAlpha = 0; game.c3FadeDir = 0; }
+          if (game.c3FadeAlpha >= 1) { game.c3FadeAlpha = 1; game.c3FadeDir = 0; }
+        }
+        if (c3FadeRef.current) {
+          c3FadeRef.current.style.opacity = String(game.c3FadeAlpha);
+        }
+
+        // --- Phase state machine ---
+        if (game.c3Phase === 'truck_driving') {
+          // Phase 1: Truck driving away (0-4s), camera follows from behind
+          if (game.c3TruckRef) {
+            game.c3TruckRef.position.z = -100 + t * 3;
+          }
+          // Camera behind and above truck
+          camera.position.set(0, 4, -100 + t * 3 - 8);
+          camera.lookAt(0, 2, -100 + t * 3 + 5);
+          if (t > 4) {
+            game.c3Phase = 'fade_to_city';
+            game.c3FadeDir = 1; // fade out
+          }
+        } else if (game.c3Phase === 'fade_to_city') {
+          // Fade to black, then reposition for city scene
+          if (game.c3FadeAlpha >= 1) {
+            // Reposition truck to start of city road
+            if (game.c3TruckRef) {
+              game.c3TruckRef.position.set(0, 0, -80);
+            }
+            camera.position.set(0, 3.5, -85);
+            camera.lookAt(0, 2, -70);
+            game.c3Phase = 'fade_in_city';
+            game.c3FadeDir = -1; // fade in
+          }
+        } else if (game.c3Phase === 'fade_in_city') {
+          // Fading in to city scene, truck starts moving
+          if (game.c3FadeAlpha <= 0) {
+            game.c3Phase = 'city_driving';
+          }
+        } else if (game.c3Phase === 'city_driving') {
+          // Truck drives through city, camera follows from behind/side
+          const cityT = t - 6; // time since city scene started (approx)
+          const truckSpeed = 6;
+          if (game.c3TruckRef) {
+            game.c3TruckRef.position.z = -80 + cityT * truckSpeed;
+          }
+          // Camera: slightly offset to the side and behind
+          camera.position.set(-3, 3.5, -80 + cityT * truckSpeed - 10);
+          camera.lookAt(0, 2, -80 + cityT * truckSpeed + 8);
+
+          // Start Briggs dialogue at ~2s into city driving
+          if (cityT > 2 && game.c3DialogueSpeaker === '') {
+            game.c3DialogueSpeaker = 'Sgt. Briggs';
+            game.c3DialogueText = 'This place is a mess, let\'s hope we can get home in time to prevent history repeating itself';
+            game.c3DialogueCharIdx = 0;
+            game.c3DialogueLastCharTime = performance.now();
+          }
+
+          // After Briggs finishes typing, wait 2s then start player dialogue
+          if (game.c3DialogueSpeaker === 'Sgt. Briggs' && game.c3DialogueCharIdx >= game.c3DialogueText.length) {
+            if (!game.c3WaitingForEnd) {
+              game.c3WaitingForEnd = true;
+              game.c3EndTime = t;
+            }
+            if (t - game.c3EndTime > 2 && game.c3DialogueSpeaker === 'Sgt. Briggs') {
+              game.c3DialogueSpeaker = `Recruit ${playerName}`;
+              game.c3DialogueText = 'Are you sure I should be on a mission like this?';
+              game.c3DialogueCharIdx = 0;
+              game.c3DialogueLastCharTime = performance.now();
+              game.c3WaitingForEnd = false;
+            }
+          }
+
+          // After player finishes, wait 2s, then camera pans to sun + Briggs says "We'll see"
+          if (game.c3DialogueSpeaker.startsWith('Recruit') && game.c3DialogueCharIdx >= game.c3DialogueText.length) {
+            if (!game.c3WaitingForEnd) {
+              game.c3WaitingForEnd = true;
+              game.c3EndTime = t;
+            }
+            if (t - game.c3EndTime > 2 && !game.c3CameraPanStarted) {
+              game.c3CameraPanStarted = true;
+              game.c3DialogueSpeaker = 'Sgt. Briggs';
+              game.c3DialogueText = "We'll see";
+              game.c3DialogueCharIdx = 0;
+              game.c3DialogueLastCharTime = performance.now();
+              game.c3EndTime = t;
+            }
+          }
+
+          // Camera pan toward sun after "We'll see" finishes
+          if (game.c3CameraPanStarted && game.c3DialogueCharIdx >= game.c3DialogueText.length && game.c3DialogueText === "We'll see") {
+            if (!game.c3WaitingForEnd || game.c3Phase === 'city_driving') {
+              game.c3WaitingForEnd = true;
+              game.c3EndTime = t;
+              game.c3Phase = 'camera_sun';
+            }
+          }
+        } else if (game.c3Phase === 'camera_sun') {
+          // Slowly pan camera toward the sun
+          const sunPanT = t - game.c3EndTime;
+          if (game.c3TruckRef) {
+            game.c3TruckRef.position.z += dt * 3; // truck keeps moving slowly
+          }
+          // Interpolate camera toward sun position
+          const sunTarget = new THREE.Vector3(15, 12, game.c3TruckRef ? game.c3TruckRef.position.z - 20 : 0);
+          camera.position.lerp(sunTarget, dt * 0.3);
+          camera.lookAt(30, 18, -150); // look at sun
+
+          // After 2 seconds, end the level
+          if (sunPanT > 2) {
+            game.c3Phase = 'ending';
+            sounds.playMatchEnd(true);
+            onMatchEnd([{
+              id: 'player', name: playerName, isBot: false, classId: playerClass.id,
+              kills: 0, deaths: 0, assists: 0,
+              score: 100, headshots: 0,
+              timePlayedSeconds: Math.floor(t),
+            }]);
+          }
+        }
+
+        // --- Typewriter for c3 dialogue ---
+        if (game.c3DialogueCharIdx < game.c3DialogueText.length) {
+          const now = performance.now();
+          if (now - game.c3DialogueLastCharTime > 35) {
+            game.c3DialogueCharIdx++;
+            game.c3DialogueLastCharTime = now;
+            sounds.playTypeSound();
+          }
+        }
+        if (c3DialogueTextRef.current) {
+          c3DialogueTextRef.current.textContent = game.c3DialogueText.substring(0, game.c3DialogueCharIdx);
+        }
+        if (c3DialogueSpeakerRef.current) {
+          c3DialogueSpeakerRef.current.textContent = game.c3DialogueSpeaker;
+        }
+      }
+
       // Render Next Frame
       if (game.renderer && game.scene && game.camera && !someoneWon) {
         game.renderer.render(game.scene, game.camera);
@@ -5540,6 +5753,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         </div>
       )}
 
+      {/* Campaign 3 cutscene dialogue overlay */}
+      {config.isCampaign && config.mapId === 'campaign3' && (
+        <div className="absolute bottom-12 left-8 z-40 pointer-events-none">
+          <div className="bg-black/80 border border-orange-500/40 backdrop-blur-sm px-5 py-3 rounded-xl max-w-lg">
+            <p ref={c3DialogueSpeakerRef} className="text-orange-400 font-mono text-sm font-bold mb-1 min-h-[20px]"></p>
+            <p ref={c3DialogueTextRef} className="text-orange-100/90 font-mono text-base min-h-[24px]"></p>
+          </div>
+        </div>
+      )}
+
+      {/* Campaign 3 fade overlay */}
+      {config.isCampaign && config.mapId === 'campaign3' && (
+        <div
+          ref={c3FadeRef}
+          className="absolute inset-0 z-50 pointer-events-none bg-black"
+          style={{ opacity: 1 }}
+        />
+      )}
+
       {/* Campaign 2 objective marker */}
       {config.isCampaign && config.mapId === 'campaign2' && gameRef.current.c2Stage < 3 && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
@@ -5553,8 +5785,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         </div>
       )}
 
-      {/* Mouse Lock & Instruction Screen Overlay */}
-      {!isLocked && !isOverlayDismissed && !gameRef.current.playerIsDead && (
+      {/* Mouse Lock & Instruction Screen Overlay - skip for cutscenes */}
+      {!isLocked && !isOverlayDismissed && !gameRef.current.playerIsDead && !(config.isCampaign && config.mapId === 'campaign3') && (
         <div
           id="pointer-lock-overlay"
           onClick={(e) => {
