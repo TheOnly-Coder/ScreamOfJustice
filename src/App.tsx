@@ -574,7 +574,7 @@ export default function App() {
             touchInputsRef={touchInputsRef}
             useTouchControls={useTouchControls}
           />
-          {!matchConfig?.spectatorMode && !(matchConfig?.isCampaign && (matchConfig?.mapId === 'campaign3' || matchConfig?.mapId === 'campaign4')) && <GameHUD
+          {!matchConfig?.spectatorMode && !(matchConfig?.isCampaign && matchConfig?.mapId === 'campaign3') && <GameHUD
             graphicsQuality={graphicsQuality}
             onGraphicsChange={setGraphicsQuality}
             stats={stats}

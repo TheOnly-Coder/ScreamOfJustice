@@ -2632,6 +2632,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         return;
       }
 
+      // Campaign 4 NPC interaction (military base) - press F to talk
+      if (config.isCampaign && config.mapId === 'campaign4' && game.c4Phase === 'military_base' && game.c4InteractTarget && game.c4InteractCooldown <= 0 && e.key.toLowerCase() === 'f') {
+        const npcName = game.c4InteractTarget;
+        game.c4InteractCooldown = 2;
+        const npcLines: Record<string, string> = {
+          'Pvt. Adams': 'We made it back, but barely. The ambush caught us off guard.',
+          'Pvt. Chen': 'The medics are doing what they can. We lost good people out there.',
+          'Cpl. Diaz': 'Briggs says we are regrouping here. No idea what is next.',
+          'Pvt. Foster': 'I heard comms crackle earlier. Someone was trying to reach us.',
+          'Sgt. Briggs': 'Good to see you in one piece. We will figure out our next move soon.',
+          'Pvt. Hayes': '...it hurts... just need a minute...',
+          'Pvt. Kim': 'The medics say I will be fine. Just need rest.',
+          'Medic': 'We are running low on supplies. But we will manage.',
+        };
+        game.c4DialogueSpeaker = npcName;
+        game.c4DialogueText = npcLines[npcName] || '...';
+        game.c4DialogueCharIdx = 0;
+        game.c4DialogueLastCharTime = performance.now();
+        return;
+      }
+
       const key = e.key.toLowerCase();
       game.keys[key] = true;
 
@@ -6366,10 +6387,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         <div className='absolute bottom-32 left-1/2 -translate-x-1/2 z-40 flex gap-6'>
           <button
             ref={c4Choice1Ref}
-            className='hidden items-center gap-2 bg-slate-900/80 border border-emerald-500/50 hover:border-emerald-400 px-5 py-3 rounded-lg transition-all'
+            className='items-center gap-2 bg-slate-900/80 border border-emerald-500/50 hover:border-emerald-400 px-5 py-3 rounded-lg transition-all cursor-pointer'
             style={{ display: 'none' }}
             onClick={() => {
-              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
+              const g = gameRef.current;
+              if (!g.c4ChoiceShown) return;
+              if (g.c4ChoicePhase === 'drive_or_scout') {
+                g.c4ChoiceMade = 'keep_driving';
+                g.c4ChoiceShown = false;
+                g.c4Phase = 'driving_meet_stranger';
+                g.c4CutsceneTime = 0;
+              } else if (g.c4ChoicePhase === 'let_on_board') {
+                g.c4ChoiceMade = 'accept';
+                g.c4ChoiceShown = false;
+                g.c4Phase = 'stranger_accepted';
+                g.c4CutsceneTime = 0;
+              }
+              g.c4DialogueText = '';
+              g.c4DialogueSpeaker = '';
+              if (c4Choice1Ref.current) c4Choice1Ref.current.style.display = 'none';
+              if (c4Choice2Ref.current) c4Choice2Ref.current.style.display = 'none';
+              if (c4DialogueTextRef.current) c4DialogueTextRef.current.textContent = '';
+              if (c4DialogueSpeakerRef.current) c4DialogueSpeakerRef.current.textContent = '';
             }}
           >
             <span className='text-emerald-400 font-mono text-sm font-bold'>X</span>
@@ -6377,10 +6416,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           </button>
           <button
             ref={c4Choice2Ref}
-            className='hidden items-center gap-2 bg-slate-900/80 border border-red-500/50 hover:border-red-400 px-5 py-3 rounded-lg transition-all'
+            className='items-center gap-2 bg-slate-900/80 border border-red-500/50 hover:border-red-400 px-5 py-3 rounded-lg transition-all cursor-pointer'
             style={{ display: 'none' }}
             onClick={() => {
-              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v' }));
+              const g = gameRef.current;
+              if (!g.c4ChoiceShown) return;
+              if (g.c4ChoicePhase === 'drive_or_scout') {
+                g.c4ChoiceMade = 'scout';
+                g.c4ChoiceShown = false;
+                g.c4Phase = 'scout_area';
+                g.c4PlayerCanMove = true;
+                g.c4CutsceneTime = 0;
+              } else if (g.c4ChoicePhase === 'let_on_board') {
+                g.c4ChoiceMade = 'reject';
+                g.c4ChoiceShown = false;
+                g.c4Phase = 'stranger_rejected_fade';
+                g.c4CutsceneTime = 0;
+              }
+              g.c4DialogueText = '';
+              g.c4DialogueSpeaker = '';
+              if (c4Choice1Ref.current) c4Choice1Ref.current.style.display = 'none';
+              if (c4Choice2Ref.current) c4Choice2Ref.current.style.display = 'none';
+              if (c4DialogueTextRef.current) c4DialogueTextRef.current.textContent = '';
+              if (c4DialogueSpeakerRef.current) c4DialogueSpeakerRef.current.textContent = '';
             }}
           >
             <span className='text-red-400 font-mono text-sm font-bold'>V</span>
