@@ -2600,16 +2600,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             game.c4ChoiceShown = false;
             if (c4Choice1Ref.current) c4Choice1Ref.current.style.display = 'none';
             if (c4Choice2Ref.current) c4Choice2Ref.current.style.display = 'none';
-            // Start drive path
-            game.c4Phase = 'driving_meet_stranger';
-            game.c4CutsceneTime = 0;
           } else if (game.c4ChoicePhase === 'let_on_board') {
             game.c4ChoiceMade = 'accept';
             game.c4ChoiceShown = false;
             if (c4Choice1Ref.current) c4Choice1Ref.current.style.display = 'none';
             if (c4Choice2Ref.current) c4Choice2Ref.current.style.display = 'none';
-            game.c4Phase = 'stranger_accepted';
-            game.c4CutsceneTime = 0;
           }
         } else if (e.key.toLowerCase() === 'v') {
           if (game.c4ChoicePhase === 'drive_or_scout') {
@@ -2617,16 +2612,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             game.c4ChoiceShown = false;
             if (c4Choice1Ref.current) c4Choice1Ref.current.style.display = 'none';
             if (c4Choice2Ref.current) c4Choice2Ref.current.style.display = 'none';
-            game.c4Phase = 'scout_area';
-            game.c4PlayerCanMove = true;
-            game.c4CutsceneTime = 0;
           } else if (game.c4ChoicePhase === 'let_on_board') {
             game.c4ChoiceMade = 'reject';
             game.c4ChoiceShown = false;
             if (c4Choice1Ref.current) c4Choice1Ref.current.style.display = 'none';
             if (c4Choice2Ref.current) c4Choice2Ref.current.style.display = 'none';
-            game.c4Phase = 'stranger_rejected_fade';
-            game.c4CutsceneTime = 0;
           }
         }
         return;
@@ -5715,24 +5705,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             }
           }
         } else if (game.c4Phase === 'show_drive_or_scout_choice') {
-          // Waiting for player input (handled in keydown)
+          // Waiting for player input - check if choice was made
           camera.position.set(
             game.playerPos.x,
             game.playerPos.y,
             game.playerPos.z
           );
           camera.rotation.set(game.pitch, game.yaw, 0);
-          // Check if choice was made (via keydown handler)
           if (game.c4ChoiceMade === 'keep_driving') {
+            // Clear dialogue and start driving path
             game.c4DialogueText = '';
             game.c4DialogueSpeaker = '';
             if (c4DialogueTextRef.current) c4DialogueTextRef.current.textContent = '';
             if (c4DialogueSpeakerRef.current) c4DialogueSpeakerRef.current.textContent = '';
+            game.c4ChoiceMade = null;
+            game.c4Phase = 'driving_meet_stranger';
+            game.c4CutsceneTime = 0;
           } else if (game.c4ChoiceMade === 'scout') {
+            // Clear dialogue and enable scouting
             game.c4DialogueText = '';
             game.c4DialogueSpeaker = '';
             if (c4DialogueTextRef.current) c4DialogueTextRef.current.textContent = '';
             if (c4DialogueSpeakerRef.current) c4DialogueSpeakerRef.current.textContent = '';
+            game.c4ChoiceMade = null;
+            game.c4Phase = 'scout_area';
+            game.c4PlayerCanMove = true;
+            game.c4CutsceneTime = 0;
           }
         } else if (game.c4Phase === 'driving_meet_stranger') {
           // PATH A: Keep driving -> meet stranger on the road
@@ -5789,8 +5787,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             game.c4CutsceneTime = 0;
           }
         } else if (game.c4Phase === 'waiting_for_stranger_choice') {
+          // Waiting for player to accept or reject the stranger
           if (game.c4ChoiceMade === 'accept') {
             // Stranger gets on board
+            game.c4ChoiceMade = null;
             game.c4StrangerOnBoard = true;
             game.c4DialogueSpeaker = '?';
             game.c4DialogueText = 'Thank you. You will not regret this.';
@@ -5799,10 +5799,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             game.c4Phase = 'stranger_accepted';
             game.c4CutsceneTime = 0;
           } else if (game.c4ChoiceMade === 'reject') {
+            // Stranger rejected - fade to military base
+            game.c4ChoiceMade = null;
             game.c4DialogueText = '';
             game.c4DialogueSpeaker = '';
             if (c4DialogueTextRef.current) c4DialogueTextRef.current.textContent = '';
             if (c4DialogueSpeakerRef.current) c4DialogueSpeakerRef.current.textContent = '';
+            game.c4Phase = 'stranger_rejected_fade';
+            game.c4CutsceneTime = 0;
           }
         } else if (game.c4Phase === 'stranger_accepted') {
           // Stranger is on board, drive off -> would go to campaign5
@@ -6387,28 +6391,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         <div className='absolute bottom-32 left-1/2 -translate-x-1/2 z-40 flex gap-6'>
           <button
             ref={c4Choice1Ref}
-            className='items-center gap-2 bg-slate-900/80 border border-emerald-500/50 hover:border-emerald-400 px-5 py-3 rounded-lg transition-all cursor-pointer'
+            className='hidden items-center gap-2 bg-slate-900/80 border border-emerald-500/50 hover:border-emerald-400 px-5 py-3 rounded-lg transition-all cursor-pointer'
             style={{ display: 'none' }}
             onClick={() => {
-              const g = gameRef.current;
-              if (!g.c4ChoiceShown) return;
-              if (g.c4ChoicePhase === 'drive_or_scout') {
-                g.c4ChoiceMade = 'keep_driving';
-                g.c4ChoiceShown = false;
-                g.c4Phase = 'driving_meet_stranger';
-                g.c4CutsceneTime = 0;
-              } else if (g.c4ChoicePhase === 'let_on_board') {
-                g.c4ChoiceMade = 'accept';
-                g.c4ChoiceShown = false;
-                g.c4Phase = 'stranger_accepted';
-                g.c4CutsceneTime = 0;
-              }
-              g.c4DialogueText = '';
-              g.c4DialogueSpeaker = '';
-              if (c4Choice1Ref.current) c4Choice1Ref.current.style.display = 'none';
-              if (c4Choice2Ref.current) c4Choice2Ref.current.style.display = 'none';
-              if (c4DialogueTextRef.current) c4DialogueTextRef.current.textContent = '';
-              if (c4DialogueSpeakerRef.current) c4DialogueSpeakerRef.current.textContent = '';
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
             }}
           >
             <span className='text-emerald-400 font-mono text-sm font-bold'>X</span>
@@ -6416,29 +6402,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           </button>
           <button
             ref={c4Choice2Ref}
-            className='items-center gap-2 bg-slate-900/80 border border-red-500/50 hover:border-red-400 px-5 py-3 rounded-lg transition-all cursor-pointer'
+            className='hidden items-center gap-2 bg-slate-900/80 border border-red-500/50 hover:border-red-400 px-5 py-3 rounded-lg transition-all cursor-pointer'
             style={{ display: 'none' }}
             onClick={() => {
-              const g = gameRef.current;
-              if (!g.c4ChoiceShown) return;
-              if (g.c4ChoicePhase === 'drive_or_scout') {
-                g.c4ChoiceMade = 'scout';
-                g.c4ChoiceShown = false;
-                g.c4Phase = 'scout_area';
-                g.c4PlayerCanMove = true;
-                g.c4CutsceneTime = 0;
-              } else if (g.c4ChoicePhase === 'let_on_board') {
-                g.c4ChoiceMade = 'reject';
-                g.c4ChoiceShown = false;
-                g.c4Phase = 'stranger_rejected_fade';
-                g.c4CutsceneTime = 0;
-              }
-              g.c4DialogueText = '';
-              g.c4DialogueSpeaker = '';
-              if (c4Choice1Ref.current) c4Choice1Ref.current.style.display = 'none';
-              if (c4Choice2Ref.current) c4Choice2Ref.current.style.display = 'none';
-              if (c4DialogueTextRef.current) c4DialogueTextRef.current.textContent = '';
-              if (c4DialogueSpeakerRef.current) c4DialogueSpeakerRef.current.textContent = '';
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v' }));
             }}
           >
             <span className='text-red-400 font-mono text-sm font-bold'>V</span>
