@@ -455,7 +455,6 @@ export default function App() {
     } else if (chapter === 4) {
       // Chapter 4: The Signal - Branching narrative
       const c4Config: MatchConfig = {
-        mapId: 'campaign4',
         timeLimit: 600,
         scoreLimit: 99,
         botCount: 0,
@@ -464,7 +463,6 @@ export default function App() {
         isCampaign: true,
       };
       const c4Class: CharacterClass = {
-        id: 'campaign4_loadout',
         name: 'Operative',
         codename: 'OP',
         description: 'Campaign Mission 4 loadout.',
