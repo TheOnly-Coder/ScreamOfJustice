@@ -114,7 +114,7 @@ export interface XpEvent {
 export type GameMode = 'FFA' | 'TEAMS_2v2' | 'TEAMS_4v4' | 'TEAMS_2v2v2';
 
 export interface MatchConfig {
-  mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo' | 'tutorial' | 'campaign2' | 'campaign3';
+  mapId: 'shipment' | 'rust' | 'dust2' | 'nuketown' | 'teams_combo' | 'tutorial' | 'campaign2' | 'campaign3' | 'campaign4';
   timeLimit: number; // in seconds
   scoreLimit: number; // kills to win (FFA) or team score limit (Teams)
   botCount: number;

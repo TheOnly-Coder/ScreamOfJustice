@@ -452,6 +452,44 @@ export default function App() {
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
       setGameState('PLAYING');
+    } else if (chapter === 4) {
+      // Chapter 4: The Signal - Branching narrative
+      const c4Config: MatchConfig = {
+        mapId: 'campaign4',
+        timeLimit: 600,
+        scoreLimit: 99,
+        botCount: 0,
+        difficulty: 'MEDIUM',
+        gameMode: 'FFA',
+        isCampaign: true,
+      };
+      const c4Class: CharacterClass = {
+        id: 'campaign4_loadout',
+        name: 'Operative',
+        codename: 'OP',
+        description: 'Campaign Mission 4 loadout.',
+        primaryWeapon: WEAPONS.m4_assault,
+        secondaryWeapon: WEAPONS.mw11_pistol,
+        maxHealth: 160,
+        speed: 1.0,
+        color: '#1a1a2a',
+        accentColor: '#ff4444',
+        ability: { name: 'None', description: '', cooldown: 999 },
+      };
+      setMatchConfig(c4Config);
+      setPlayerClass(c4Class);
+      setPlayerName(user?.username || 'Recruit_Soldier');
+      setGameMode('FFA');
+      setTeamScores([]);
+      setPlayerHealth(c4Class.maxHealth);
+      setPlayerMaxHealth(c4Class.maxHealth);
+      setPlayerClip(c4Class.primaryWeapon.maxAmmo);
+      setPlayerReserve(c4Class.primaryWeapon.maxAmmo * 5);
+      setMatchTimeLeft(600);
+      setAbilityCooldownLeft(0);
+      setKillFeed([]);
+      touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
+      setGameState('PLAYING');
     }
   };
 
@@ -536,7 +574,7 @@ export default function App() {
             touchInputsRef={touchInputsRef}
             useTouchControls={useTouchControls}
           />
-          {!matchConfig?.spectatorMode && !(matchConfig?.isCampaign && matchConfig?.mapId === 'campaign3') && <GameHUD
+          {!matchConfig?.spectatorMode && !(matchConfig?.isCampaign && (matchConfig?.mapId === 'campaign3' || matchConfig?.mapId === 'campaign4')) && <GameHUD
             graphicsQuality={graphicsQuality}
             onGraphicsChange={setGraphicsQuality}
             stats={stats}
