@@ -24,7 +24,7 @@ const SFX_LIST = [
   // footsteps
   'step-1', 'step-2', 'step-3', 'step-wood-1', 'step-wood-2', 'step-wood-3',
   // ui
-  'ui-click', 'ui-hover', 'ui-open', 'ui-back', 'ui-toggle', 'deploy',
+  'ui-click', 'ui-open', 'ui-back', 'ui-toggle', 'deploy',
 ] as const;
 
 type SfxName = (typeof SFX_LIST)[number];
@@ -53,13 +53,13 @@ class SoundManager {
       // Master bus: gentle compression keeps layered gunfire/explosions
       // punchy without the deafening clipping the old synth suffered.
       this.compressor = this.ctx.createDynamicsCompressor();
-      this.compressor.threshold.value = -14;
+      this.compressor.threshold.value = -16;
       this.compressor.knee.value = 22;
-      this.compressor.ratio.value = 7;
+      this.compressor.ratio.value = 5;
       this.compressor.attack.value = 0.002;
       this.compressor.release.value = 0.18;
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.9;
+      this.master.gain.value = 0.72;
       this.master.connect(this.compressor);
       this.compressor.connect(this.ctx.destination);
     }
@@ -71,7 +71,7 @@ class SoundManager {
   toggle(state?: boolean) {
     this.enabled = state !== undefined ? state : !this.enabled;
     if (this.master && this.ctx) {
-      this.master.gain.value = this.enabled ? 0.9 : 0;
+      this.master.gain.value = this.enabled ? 0.72 : 0;
     }
   }
 
@@ -128,7 +128,7 @@ class SoundManager {
     if (!buf || !this.ctx || !this.master || !this.enabled) return false;
     // Voice cap: under heavy crossfire skip quiet extras instead of building
     // an undistinguishable wall of noise.
-    if (this.activeVoices > 14) return false;
+    if (this.activeVoices > 10) return false;
 
     const { vol = 1, rate = 1, jitter = 0.05, dist = 0, maxDist = 65 } = opts;
     const src = this.ctx.createBufferSource();
@@ -178,11 +178,11 @@ class SoundManager {
     }
   }
 
-  /** First-person shot: full punch, small pitch jitter so it never drones. */
+  /** First-person shot: present but not deafening, small pitch jitter so it never drones. */
   playShoot(type: string) {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf(this.shootSampleFor(type), { vol: 0.85, jitter: 0.045 })) return;
+    if (this.playBuf(this.shootSampleFor(type), { vol: 0.5, jitter: 0.045 })) return;
 
     // --- synth fallback (legacy) ---
     if (!this.ctx) return;
@@ -290,7 +290,7 @@ class SoundManager {
     if (!this.enabled) return;
     this.init();
     if (dist > 65) return;
-    if (this.playBuf(this.shootSampleFor(type), { vol: 0.75, jitter: 0.08, dist })) return;
+    if (this.playBuf(this.shootSampleFor(type), { vol: 0.42, jitter: 0.08, dist })) return;
     // Fallback: quiet synth shot
     if (dist < 22) this.playShoot(type);
   }
@@ -299,7 +299,7 @@ class SoundManager {
   playExplosion() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('explosion', { vol: 0.95, jitter: 0.04 })) return;
+    if (this.playBuf('explosion', { vol: 0.6, jitter: 0.04 })) return;
     // Synth fallback: filtered noise burst
     if (!this.ctx) return;
     const ctx = this.ctx;
@@ -329,7 +329,7 @@ class SoundManager {
   playDryFire() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('dryfire', { vol: 0.55, jitter: 0.06 })) return;
+    if (this.playBuf('dryfire', { vol: 0.4, jitter: 0.06 })) return;
     if (!this.ctx) return;
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -353,13 +353,13 @@ class SoundManager {
     this.init();
     const t = weaponType || '';
     if (t === 'SHOTGUN') {
-      if (this.playBuf('reload-pump', { vol: 0.8, jitter: 0.04 })) return;
+      if (this.playBuf('reload-pump', { vol: 0.5, jitter: 0.04 })) return;
     } else if (t === 'SNIPER') {
-      if (this.playBuf('reload-pump', { vol: 0.7, rate: 0.9 })) return;
+      if (this.playBuf('reload-pump', { vol: 0.45, rate: 0.9 })) return;
     } else if (t === 'AR' || t === 'LMG') {
-      if (this.playBuf('reload-ar', { vol: 0.8, jitter: 0.03 })) return;
+      if (this.playBuf('reload-ar', { vol: 0.5, jitter: 0.03 })) return;
     } else {
-      if (this.playBuf('reload-mag', { vol: 0.8, jitter: 0.04 })) return;
+      if (this.playBuf('reload-mag', { vol: 0.5, jitter: 0.04 })) return;
     }
 
     // --- synth fallback (legacy two-click) ---
@@ -396,14 +396,14 @@ class SoundManager {
   playHit() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('hit', { vol: 0.7, jitter: 0.09 })) return;
+    if (this.playBuf('hit', { vol: 0.32, jitter: 0.09 })) return;
     this.synthBlip('sine', 2000, 0.15, 0.04);
   }
 
   playHeadshot() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('headshot', { vol: 0.85, jitter: 0.05 })) return;
+    if (this.playBuf('headshot', { vol: 0.42, jitter: 0.05 })) return;
     if (!this.ctx) return;
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -430,28 +430,28 @@ class SoundManager {
   playKill() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('kill', { vol: 0.9, jitter: 0.03 })) return;
+    if (this.playBuf('kill', { vol: 0.5, jitter: 0.03 })) return;
     this.synthBlip('triangle', 880, 0.35, 0.3, 1320);
   }
 
   playHurt() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('hurt', { vol: 0.8, jitter: 0.08 })) return;
+    if (this.playBuf('hurt', { vol: 0.42, jitter: 0.08 })) return;
     this.synthBlip('sawtooth', 140, 0.18, 0.3, 50, true);
   }
 
   playDeath() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('death', { vol: 0.85, jitter: 0.05 })) return;
+    if (this.playBuf('death', { vol: 0.5, jitter: 0.05 })) return;
     this.synthBlip('sawtooth', 110, 0.65, 0.4, 25, true);
   }
 
   playAbility() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('ability', { vol: 0.8, jitter: 0.03 })) return;
+    if (this.playBuf('ability', { vol: 0.5, jitter: 0.03 })) return;
     this.synthBlip('sine', 300, 0.55, 0.35, 1200, false, 0.5);
   }
 
@@ -459,9 +459,9 @@ class SoundManager {
     if (!this.enabled) return;
     this.init();
     if (isVictory) {
-      if (this.playBuf('victory', { vol: 0.9 })) return;
+      if (this.playBuf('victory', { vol: 0.6 })) return;
     } else {
-      if (this.playBuf('defeat', { vol: 0.8, rate: 0.9 })) return;
+      if (this.playBuf('defeat', { vol: 0.55, rate: 0.9 })) return;
     }
     // Legacy chord fallback
     if (!this.ctx) return;
@@ -487,14 +487,14 @@ class SoundManager {
   playTypeSound() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('type', { vol: 0.5, jitter: 0.15 })) return;
+    if (this.playBuf('type', { vol: 0.28, jitter: 0.15 })) return;
     this.synthBlip('sine', 800 + Math.random() * 400, 0.03, 0.035);
   }
 
   playTutComplete() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('tut', { vol: 0.75 })) return;
+    if (this.playBuf('tut', { vol: 0.5 })) return;
     this.synthBlip('sine', 660, 0.25, 0.15, 880);
   }
 
@@ -507,7 +507,7 @@ class SoundManager {
     this.stepAlternate = !this.stepAlternate;
     const idx = this.stepAlternate ? 1 : 2;
     const name: SfxName = surface === 'wood' ? `step-wood-${idx}` as SfxName : `step-${idx}` as SfxName;
-    this.playBuf(name, { vol: running ? 0.5 : 0.32, jitter: 0.12, rate: running ? 1.06 : 0.96 });
+    this.playBuf(name, { vol: running ? 0.24 : 0.15, jitter: 0.12, rate: running ? 1.06 : 0.96 });
   }
 
   // ================= UI =================
@@ -516,12 +516,12 @@ class SoundManager {
     if (!this.enabled) return;
     this.init();
     switch (kind) {
-      case 'hover': this.playBuf('ui-hover', { vol: 0.35, jitter: 0.06 }); return;
-      case 'open': this.playBuf('ui-open', { vol: 0.5, jitter: 0.04 }); return;
-      case 'back': this.playBuf('ui-back', { vol: 0.55, jitter: 0.06 }); return;
-      case 'toggle': this.playBuf('ui-toggle', { vol: 0.5, jitter: 0.05 }); return;
-      case 'deploy': this.playBuf('deploy', { vol: 0.9, jitter: 0.02 }); return;
-      default: this.playBuf('ui-click', { vol: 0.6, jitter: 0.05 });
+      case 'hover': return; // hover ticks were annoying — intentionally silent
+      case 'open': this.playBuf('ui-open', { vol: 0.32, jitter: 0.04 }); return;
+      case 'back': this.playBuf('ui-back', { vol: 0.36, jitter: 0.06 }); return;
+      case 'toggle': this.playBuf('ui-toggle', { vol: 0.32, jitter: 0.05 }); return;
+      case 'deploy': this.playBuf('deploy', { vol: 0.5, jitter: 0.02 }); return;
+      default: this.playBuf('ui-click', { vol: 0.4, jitter: 0.05 });
     }
   }
 

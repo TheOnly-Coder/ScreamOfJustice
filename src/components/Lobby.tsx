@@ -1214,7 +1214,6 @@ export const Lobby: React.FC<LobbyProps> = ({
             <button
               id="start-match-button"
               onClick={handleStart}
-              onMouseEnter={() => sounds.playUi('hover')}
               className="group relative w-full py-4 px-6 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-sans font-bold tracking-wide rounded-2xl shadow-xl shadow-emerald-500/10 flex items-center justify-center gap-2 transform active:scale-[0.98] transition-all overflow-hidden"
             >
               <span className="relative z-10 flex items-center gap-2">

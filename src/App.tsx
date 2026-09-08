@@ -3,7 +3,7 @@ import { GameState, CharacterClass, MatchConfig, MatchStats, KillFeedEntry, KeyB
 import { Lobby } from './components/Lobby';
 // GameCanvas pulls in all of three.js — keep it out of the landing bundle so
 // the menu boots instantly; the chunk streams in the background while the
-// user is still in the lobby / briefing.
+// user is still in the lobby.
 const GameCanvas = lazy(() => import('./components/GameCanvas').then(m => ({ default: m.GameCanvas })));
 import { GameHUD } from './components/GameHUD';
 import { ScoreboardScreen } from './components/ScoreboardScreen';
@@ -11,7 +11,6 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 import { MainMenu } from './components/MainMenu';
 import { CampaignGlobe } from './components/CampaignGlobe';
 import { ChapterSelect } from './components/ChapterSelect';
-import { DeployScreen } from './components/DeployScreen';
 import { db, getActiveBackend, defaultDb, fastDb } from './lib/firebase';
 import { doc, updateDoc, collection, addDoc, setDoc, getDoc } from 'firebase/firestore';
 import { ref as rtdbRef, update as rtdbUpdate, push as rtdbPush, set as rtdbSet, get as rtdbGet } from 'firebase/database';
@@ -160,7 +159,7 @@ export default function App() {
       keys: {}
     };
 
-    setGameState('DEPLOYING');
+    setGameState('PLAYING');
   };
 
   const handleStatsUpdate = (updatedStats: MatchStats[]) => {
@@ -394,7 +393,7 @@ export default function App() {
       setAbilityCooldownLeft(0);
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-      setGameState('DEPLOYING');
+      setGameState('PLAYING');
     } else if (chapter === 2) {
       // Chapter 2: Behind Enemy Lines - RPG primary, Pistol secondary
       const campaignClass: CharacterClass = {
@@ -432,7 +431,7 @@ export default function App() {
       setAbilityCooldownLeft(0);
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-      setGameState('DEPLOYING');
+      setGameState('PLAYING');
     } else if (chapter === 3) {
       // Chapter 3: Cutscene - The Road Home (no gameplay, just cinematics)
       const cutsceneConfig: MatchConfig = {
@@ -470,7 +469,7 @@ export default function App() {
       setAbilityCooldownLeft(0);
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-      setGameState('DEPLOYING');
+      setGameState('PLAYING');
     } else if (chapter === 4) {
       // Chapter 4: The Signal - Branching narrative
       const c4Config: MatchConfig = {
@@ -508,7 +507,7 @@ export default function App() {
       setAbilityCooldownLeft(0);
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-      setGameState('DEPLOYING');
+      setGameState('PLAYING');
     }
   };
 
@@ -568,16 +567,6 @@ export default function App() {
             setGameState('WELCOME');
           }}
           onBack={() => setGameState('MAIN_MENU')}
-        />
-      )}
-
-      {gameState === 'DEPLOYING' && playerClass && matchConfig && (
-        <DeployScreen
-          config={matchConfig}
-          playerClass={playerClass}
-          playerName={playerName}
-          onDeploy={() => setGameState('PLAYING')}
-          onAbort={() => setGameState('MAIN_MENU')}
         />
       )}
 

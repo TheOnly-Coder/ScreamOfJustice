@@ -175,7 +175,7 @@ export function ChapterSelect({ onBack, onStartChapter }: Props) {
                     sounds.playUi('click');
                     setSelected(ch.num);
                   }}
-                  onMouseEnter={() => { if (ch.unlocked) { setHovered(ch.num); sounds.playUi('hover'); } }}
+                  onMouseEnter={() => { if (ch.unlocked) setHovered(ch.num); }}
                   onMouseLeave={() => setHovered(null)}
                   onDoubleClick={() => ch.unlocked && onStartChapter(ch.num)}
                 >
@@ -229,7 +229,6 @@ export function ChapterSelect({ onBack, onStartChapter }: Props) {
               <button
                 disabled={!sel.unlocked}
                 onClick={() => { if (sel.unlocked) { sounds.playUi('deploy'); onStartChapter(sel.num); } }}
-                onMouseEnter={() => sel.unlocked && sounds.playUi('hover')}
                 className={`w-full py-3.5 rounded-xl font-black tracking-[0.3em] text-xs uppercase flex items-center justify-center gap-2 transition-all duration-300
                   ${sel.unlocked
                     ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-[0_0_24px_rgba(16,185,129,0.3)] hover:shadow-[0_0_34px_rgba(16,185,129,0.45)]'

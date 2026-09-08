@@ -1,4 +1,4 @@
-export type GameState = 'WELCOME' | 'MAIN_MENU' | 'CAMPAIGN_GLOBE' | 'CHAPTER_SELECT' | 'LOBBY' | 'DEPLOYING' | 'PLAYING' | 'POST_MATCH';
+export type GameState = 'WELCOME' | 'MAIN_MENU' | 'CAMPAIGN_GLOBE' | 'CHAPTER_SELECT' | 'LOBBY' | 'PLAYING' | 'POST_MATCH';
 export type GraphicsLevel = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10';
 export interface GraphicsQuality {
   level: GraphicsLevel;
