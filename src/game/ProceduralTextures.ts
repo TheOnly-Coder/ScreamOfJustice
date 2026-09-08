@@ -1,6 +1,35 @@
 import * as THREE from 'three';
 
 // ============================================================
+// Texture resolution — bumped from 256 to 512 for sharper visuals.
+// 512×512 gives 4× the pixel density at the same memory cost as a single
+// mipmap level of a 1024 texture. Keeps GPU memory reasonable while
+// noticeably improving close-range texture clarity.
+// ============================================================
+const TEX_SIZE = 512;
+
+// Canvas cache — avoids regenerating identical 512×512 canvases for every
+// wall face. The canvas drawing is the expensive part; wrapping a cached
+// canvas in a new CanvasTexture is cheap and lets each face have its own
+// repeat value.
+const _canvasCache = new Map<string, HTMLCanvasElement>();
+
+function getCachedCanvas(key: string, draw: () => HTMLCanvasElement): HTMLCanvasElement {
+  let c = _canvasCache.get(key);
+  if (!c) {
+    c = draw();
+    _canvasCache.set(key, c);
+  }
+  // Return a fresh copy so callers can wrap it in their own CanvasTexture
+  // without sharing GPU state.
+  const copy = document.createElement('canvas');
+  copy.width = c.width;
+  copy.height = c.height;
+  copy.getContext('2d')!.drawImage(c, 0, 0);
+  return copy;
+}
+
+// ============================================================
 // Brick texture (no repeat set — caller controls repeat per face)
 // ============================================================
 export function createBrickTexture(
@@ -10,7 +39,38 @@ export function createBrickTexture(
   brickH = 32,
   mortarSize = 2
 ): THREE.CanvasTexture {
-  const size = 256;
+  // Scale brick dimensions up to match the higher-resolution canvas.
+  // Original was 256 with brickW=64; at 512 we double brick dims so the
+  // visual brick density stays the same but each brick has 4× the pixels.
+  const scale = TEX_SIZE / 256;
+  const bw = Math.round(brickW * scale);
+  const bh = Math.round(brickH * scale);
+  const ms = Math.max(2, Math.round(mortarSize * scale));
+
+  const canvas = getCachedCanvas(
+    `brick_${baseColor}_${mortarColor}_${bw}_${bh}_${ms}`,
+    () => drawBrickCanvas(baseColor, mortarColor, bw, bh, ms)
+  );
+  const ctx = canvas.getContext('2d')!;
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  return tex;
+}
+
+// Internal: draws the brick pattern onto a fresh canvas. Called only on
+// cache miss.
+function drawBrickCanvas(
+  baseColor: number,
+  mortarColor: number,
+  brickW: number,
+  brickH: number,
+  mortarSize: number
+): HTMLCanvasElement {
+  const size = TEX_SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -39,22 +99,31 @@ export function createBrickTexture(
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(x + mortarSize / 2, y + mortarSize / 2, bw, bh);
 
-      ctx.fillStyle = `rgba(255,255,255,0.08)`;
-      ctx.fillRect(x + mortarSize / 2, y + mortarSize / 2, bw, 1);
-      ctx.fillRect(x + mortarSize / 2, y + mortarSize / 2, 1, bh);
-      ctx.fillStyle = `rgba(0,0,0,0.08)`;
-      ctx.fillRect(x + mortarSize / 2, y + mortarSize / 2 + bh - 1, bw, 1);
-      ctx.fillRect(x + mortarSize / 2 + bw - 1, y + mortarSize / 2, 1, bh);
+      // Edge highlights / shadows — thicker at higher res for visible bevel.
+      ctx.fillStyle = `rgba(255,255,255,0.10)`;
+      ctx.fillRect(x + mortarSize / 2, y + mortarSize / 2, bw, 2);
+      ctx.fillRect(x + mortarSize / 2, y + mortarSize / 2, 2, bh);
+      ctx.fillStyle = `rgba(0,0,0,0.12)`;
+      ctx.fillRect(x + mortarSize / 2, y + mortarSize / 2 + bh - 2, bw, 2);
+      ctx.fillRect(x + mortarSize / 2 + bw - 2, y + mortarSize / 2, 2, bh);
+
+      // Subtle per-brick stain — adds weathering variation at higher res.
+      if (Math.random() < 0.3) {
+        ctx.fillStyle = `rgba(0,0,0,${0.04 + Math.random() * 0.08})`;
+        const stainW = bw * (0.3 + Math.random() * 0.5);
+        const stainH = bh * (0.2 + Math.random() * 0.4);
+        ctx.fillRect(
+          x + mortarSize / 2 + Math.random() * (bw - stainW),
+          y + mortarSize / 2 + Math.random() * (bh - stainH),
+          stainW,
+          stainH
+        );
+      }
     }
     row++;
   }
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
-  return tex;
+  return canvas;
 }
 
 // ============================================================
@@ -65,7 +134,31 @@ export function createBrickNormalMap(
   brickH = 32,
   mortarSize = 2
 ): THREE.CanvasTexture {
-  const size = 256;
+  // Scale to match the brick albedo's resolution so normals align perfectly.
+  const scale = TEX_SIZE / 256;
+  const bw = Math.round(brickW * scale);
+  const bh = Math.round(brickH * scale);
+  const ms = Math.max(2, Math.round(mortarSize * scale));
+
+  const canvas = getCachedCanvas(
+    `bricknorm_${bw}_${bh}_${ms}`,
+    () => drawBrickNormalCanvas(bw, bh, ms)
+  );
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  return tex;
+}
+
+function drawBrickNormalCanvas(
+  brickW: number,
+  brickH: number,
+  mortarSize: number
+): HTMLCanvasElement {
+  const size = TEX_SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -90,27 +183,25 @@ export function createBrickNormalMap(
 
       // Top edge highlight (normal points up)
       ctx.fillStyle = '#80c0ff';
-      ctx.fillRect(bx, by, bw, 2);
+      ctx.fillRect(bx, by, bw, 3);
 
       // Bottom edge shadow (normal points down)
       ctx.fillStyle = '#804080';
-      ctx.fillRect(bx, by + bh - 2, bw, 2);
+      ctx.fillRect(bx, by + bh - 3, bw, 3);
 
       // Left edge
       ctx.fillStyle = '#c080ff';
-      ctx.fillRect(bx, by, 2, bh);
+      ctx.fillRect(bx, by, 3, bh);
 
       // Right edge
       ctx.fillStyle = '#4080ff';
-      ctx.fillRect(bx + bw - 2, by, 2, bh);
+      ctx.fillRect(bx + bw - 3, by, 3, bh);
 
       // Mortar groove — recessed (darker)
-      // Top mortar
       if (by > 0) {
         ctx.fillStyle = '#6060cc';
         ctx.fillRect(bx - 1, by - mortarSize, bw + 2, mortarSize);
       }
-      // Left mortar
       if (bx > 0) {
         ctx.fillStyle = '#6060cc';
         ctx.fillRect(bx - mortarSize, by, mortarSize, bh);
@@ -119,12 +210,7 @@ export function createBrickNormalMap(
     row++;
   }
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
-  return tex;
+  return canvas;
 }
 
 // ============================================================
@@ -231,7 +317,7 @@ export function createConcreteTexture(
   scale = 1.0,
   noiseAmount = 15
 ): THREE.CanvasTexture {
-  const size = 256;
+  const size = TEX_SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -282,7 +368,7 @@ export function createConcreteTexture(
 export function createGrassTexture(
   baseColor: number = 0x15803d
 ): THREE.CanvasTexture {
-  const size = 256;
+  const size = TEX_SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -323,7 +409,7 @@ export function createGrassTexture(
 export function createSandTexture(
   baseColor: number = 0xca8a04
 ): THREE.CanvasTexture {
-  const size = 256;
+  const size = TEX_SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -369,7 +455,7 @@ export function createSandTexture(
 export function createRustTexture(
   baseColor: number = 0xc2410c
 ): THREE.CanvasTexture {
-  const size = 256;
+  const size = TEX_SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;

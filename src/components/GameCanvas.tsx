@@ -20,6 +20,14 @@ import {
 import { buildMap, CollidableBox } from '../game/MapBuilder';
 import { sounds } from '../lib/sounds';
 import { buildHighQualityFirstPersonWeapon, buildThirdPersonWeapon } from '../game/WeaponBuilder';
+import {
+  preloadCharacterModel,
+  tryCreateCharacterInstance,
+  isCharacterModelLoaded,
+  transitionTo,
+  CharacterInstance,
+  AnimName,
+} from '../game/CharacterModelLoader';
 
 interface GameCanvasProps {
   graphicsQuality: GraphicsQuality;
@@ -152,6 +160,16 @@ export interface BotEntity {
   botGunMesh?: THREE.Group | THREE.Mesh;
   walkAnimPhase: number;
   flinchTimer: number;
+  /** If present, this bot uses a real GLTF character model with skeletal
+   *  animations driven by AnimationMixer. Procedural leg/arm/torso rotation
+   *  code is skipped when this is set. */
+  characterInstance?: CharacterInstance | null;
+  /** Whether this bot was created with a GLTF model (vs procedural). Used to
+   *  gate per-frame animation logic. */
+  useGLTFModel?: boolean;
+  /** Tracks the last animation state we transitioned to, so we don't spam
+   *  transitionTo() every frame. */
+  lastAnimState?: AnimName | null;
   espBox?: THREE.LineSegments;
   tracerLine?: THREE.Line;
   healthBarGroup?: THREE.Group;
@@ -195,6 +213,114 @@ export interface BotEntity {
   teamId?: number; // Team index (0, 1, 2) for team modes; undefined = FFA
 }
 
+/**
+ * Try to build a GLTF-backed character (real 3D model with skeletal
+ * animations) and attach it to the given meshGroup. Returns null if the
+ * GLTF model hasn't finished loading yet — caller should fall back to the
+ * procedural character in that case.
+ *
+ * Adds to meshGroup:
+ *   - ci.root (the cloned GLTF scene with Idle/Walk/Run animations)
+ *   - invisible head hitbox (sphere) — caller assigns this to bot.headMesh
+ *   - invisible body hitbox (capsule) — caller assigns this to bot.torsoMesh
+ *
+ * The returned leftLeg/rightLeg/leftArm/rightArm are dummy empty meshes so
+ * the existing BotEntity field assignments don't need null checks. They are
+ * NOT added to the scene (no geometry, no material — pure placeholders).
+ *
+ * Visual meshes inside the GLTF root have `raycast = () => {}` overridden
+ * (set in CharacterModelLoader) so they don't interfere with hit detection.
+ */
+interface GLTFCharacterBuild {
+  characterInstance: CharacterInstance;
+  headMesh: THREE.Mesh;
+  torsoMesh: THREE.Mesh;
+  leftLeg: THREE.Mesh;
+  rightLeg: THREE.Mesh;
+  leftArm: THREE.Mesh;
+  rightArm: THREE.Mesh;
+}
+
+function tryBuildGLTFCharacter(
+  meshGroup: THREE.Group,
+  tint: THREE.Color
+): GLTFCharacterBuild | null {
+  const ci = tryCreateCharacterInstance(tint);
+  if (!ci) return null;
+
+  meshGroup.add(ci.root);
+
+  // Invisible head hitbox at the model's head bone Y
+  const headBox = new THREE.Mesh(
+    new THREE.SphereGeometry(0.32, 4, 4),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
+  );
+  headBox.position.y = ci.headY;
+  meshGroup.add(headBox);
+
+  // Invisible body hitbox (capsule) so body shots register even though
+  // the visual GLTF meshes don't participate in raycasting.
+  const bodyBox = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.35, 0.95, 4, 8),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
+  );
+  bodyBox.position.y = 1.0;
+  meshGroup.add(bodyBox);
+
+  // Dummy empty meshes — pure placeholders so BotEntity fields can be
+  // populated without null checks. They have no geometry, render nothing,
+  // and are never added to the scene.
+  const makeDummy = () => new THREE.Mesh(new THREE.BufferGeometry(), undefined as any);
+
+  return {
+    characterInstance: ci,
+    headMesh: headBox,
+    torsoMesh: bodyBox,
+    leftLeg: makeDummy(),
+    rightLeg: makeDummy(),
+    leftArm: makeDummy(),
+    rightArm: makeDummy(),
+  };
+}
+
+/**
+ * Attach a third-person weapon mesh to a GLTF character. Tries to parent
+ * the weapon to the right-hand bone for proper animation follow-through;
+ * falls back to a fixed offset on meshGroup if the bone isn't found.
+ *
+ * All weapon sub-meshes have `raycast = () => {}` overridden so bullets
+ * pass through the gun instead of being blocked by it (improvement over
+ * the original procedural behavior).
+ */
+function attachWeaponToGLTFCharacter(
+  meshGroup: THREE.Group,
+  characterInstance: CharacterInstance,
+  weapon: THREE.Group | THREE.Mesh
+): void {
+  const rightHand = characterInstance.root.getObjectByName('mixamorig:RightHand') ||
+                    characterInstance.root.getObjectByName('RightHand');
+  // Disable raycast on every weapon sub-mesh so bullets pass through.
+  weapon.traverse(child => {
+    if ((child as THREE.Mesh).isMesh) {
+      (child as THREE.Mesh).raycast = () => {};
+    }
+  });
+  if (rightHand) {
+    rightHand.add(weapon);
+    // The GLTF model is in meters; the weapon was sized for the procedural
+    // character (also ~meter scale). Adjust the offset so the gun sits in
+    // the right hand. These values are tuned for the Mixamo right-hand bone
+    // orientation.
+    weapon.position.set(0, -0.05, 0.15);
+    weapon.rotation.set(0, Math.PI, 0);
+    weapon.scale.setScalar(0.9);
+  } else {
+    // Fallback: fixed offset on meshGroup (matches old procedural behavior)
+    weapon.position.set(0.38, 1.05, 0.35);
+    meshGroup.add(weapon);
+  }
+}
+
 export const createBot = (
   index: number,
   bots: BotEntity[],
@@ -210,165 +336,194 @@ export const createBot = (
 
   const meshGroup = new THREE.Group();
 
-  // LOW-POLY ORGANIC CHARACTER MODEL
-  // Legs: hexagonal cylinders instead of boxes
-  const legGeo = new THREE.CylinderGeometry(0.15, 0.13, 0.6, 6);
-  const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
-  
-  const leftLeg = new THREE.Mesh(legGeo, legMat);
-  leftLeg.position.set(-0.24, 0.3, 0);
-  leftLeg.castShadow = true;
-  meshGroup.add(leftLeg);
+  // Try to use the real GLTF character model first. If it isn't loaded yet,
+  // fall back to the procedural low-poly body. The GLTF branch produces a
+  // fully skinned soldier with Idle/Walk/Run animations driven by
+  // AnimationMixer; the procedural branch keeps the original low-poly look.
+  const gltfBuild = tryBuildGLTFCharacter(meshGroup, new THREE.Color(botClass.color));
 
-  const rightLeg = new THREE.Mesh(legGeo, legMat);
-  rightLeg.position.set(0.24, 0.3, 0);
-  rightLeg.castShadow = true;
-  meshGroup.add(rightLeg);
+  let characterInstance: CharacterInstance | null = null;
+  let torsoMesh: THREE.Mesh;
+  let leftLeg: THREE.Mesh;
+  let rightLeg: THREE.Mesh;
+  let leftArm: THREE.Mesh;
+  let rightArm: THREE.Mesh;
+  let botGun: THREE.Group | THREE.Mesh;
+  let botHeadBox: THREE.Mesh; // invisible head hitbox (used for hit detection)
 
-  // Kneepads (small cylinders on front of legs)
-  const kneeGeo = new THREE.SphereGeometry(0.08, 4, 3);
-  const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
-  const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
-  kneeL.position.set(-0.24, 0.35, 0.12);
-  kneeL.scale.set(1, 0.8, 0.6);
-  meshGroup.add(kneeL);
-  const kneeR = kneeL.clone();
-  kneeR.position.x = 0.24;
-  meshGroup.add(kneeR);
+  if (gltfBuild) {
+    // --- GLTF character path ---
+    characterInstance = gltfBuild.characterInstance;
+    torsoMesh = gltfBuild.torsoMesh;
+    leftLeg = gltfBuild.leftLeg;
+    rightLeg = gltfBuild.rightLeg;
+    leftArm = gltfBuild.leftArm;
+    rightArm = gltfBuild.rightArm;
+    botHeadBox = gltfBuild.headMesh;
 
-  // Boots (flat-bottomed cylinders)
-  const bootGeo = new THREE.CylinderGeometry(0.16, 0.17, 0.15, 6);
-  const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
-  const bootL = new THREE.Mesh(bootGeo, bootMat);
-  bootL.position.set(-0.24, 0.075, 0.02);
-  meshGroup.add(bootL);
-  const bootR = bootL.clone();
-  bootR.position.x = 0.24;
-  meshGroup.add(bootR);
+    botGun = buildThirdPersonWeapon(botClass.primaryWeapon.id);
+    attachWeaponToGLTFCharacter(meshGroup, characterInstance, botGun);
+  } else {
+    // --- Procedural low-poly character (fallback) ---
+    // LOW-POLY ORGANIC CHARACTER MODEL
+    // Legs: hexagonal cylinders instead of boxes
+    const legGeo = new THREE.CylinderGeometry(0.15, 0.13, 0.6, 6);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
 
-  // Torso: tapered body (wider shoulders, narrow waist) using modified box
-  const torsoGeo = new THREE.BoxGeometry(0.85, 0.75, 0.5);
-  const torsoPos = torsoGeo.attributes.position;
-  for (let i = 0; i < torsoPos.count; i++) {
-    const y = torsoPos.getY(i);
-    const normalizedY = (y + 0.375) / 0.75; // 0 at bottom, 1 at top
-    const taperFactor = 0.7 + 0.3 * normalizedY; // wider at top (shoulders)
-    torsoPos.setX(i, torsoPos.getX(i) * taperFactor);
-    // Slight forward lean at top
-    if (normalizedY > 0.7) {
-      torsoPos.setZ(i, torsoPos.getZ(i) - (normalizedY - 0.7) * 0.15);
+    leftLeg = new THREE.Mesh(legGeo, legMat);
+    leftLeg.position.set(-0.24, 0.3, 0);
+    leftLeg.castShadow = true;
+    meshGroup.add(leftLeg);
+
+    rightLeg = new THREE.Mesh(legGeo, legMat);
+    rightLeg.position.set(0.24, 0.3, 0);
+    rightLeg.castShadow = true;
+    meshGroup.add(rightLeg);
+
+    // Kneepads (small cylinders on front of legs)
+    const kneeGeo = new THREE.SphereGeometry(0.08, 4, 3);
+    const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+    const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
+    kneeL.position.set(-0.24, 0.35, 0.12);
+    kneeL.scale.set(1, 0.8, 0.6);
+    meshGroup.add(kneeL);
+    const kneeR = kneeL.clone();
+    kneeR.position.x = 0.24;
+    meshGroup.add(kneeR);
+
+    // Boots (flat-bottomed cylinders)
+    const bootGeo = new THREE.CylinderGeometry(0.16, 0.17, 0.15, 6);
+    const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
+    const bootL = new THREE.Mesh(bootGeo, bootMat);
+    bootL.position.set(-0.24, 0.075, 0.02);
+    meshGroup.add(bootL);
+    const bootR = bootL.clone();
+    bootR.position.x = 0.24;
+    meshGroup.add(bootR);
+
+    // Torso: tapered body (wider shoulders, narrow waist) using modified box
+    const torsoGeo = new THREE.BoxGeometry(0.85, 0.75, 0.5);
+    const torsoPos = torsoGeo.attributes.position;
+    for (let i = 0; i < torsoPos.count; i++) {
+      const y = torsoPos.getY(i);
+      const normalizedY = (y + 0.375) / 0.75; // 0 at bottom, 1 at top
+      const taperFactor = 0.7 + 0.3 * normalizedY; // wider at top (shoulders)
+      torsoPos.setX(i, torsoPos.getX(i) * taperFactor);
+      if (normalizedY > 0.7) {
+        torsoPos.setZ(i, torsoPos.getZ(i) - (normalizedY - 0.7) * 0.15);
+      }
     }
+    torsoGeo.computeVertexNormals();
+    const torsoMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(botClass.color),
+      roughness: 0.8,
+      flatShading: true
+    });
+    torsoMesh = new THREE.Mesh(torsoGeo, torsoMat);
+    torsoMesh.position.y = 0.95;
+    torsoMesh.castShadow = true;
+    torsoMesh.receiveShadow = true;
+    meshGroup.add(torsoMesh);
+
+    // Tactical belt at waist
+    const beltGeo = new THREE.TorusGeometry(0.35, 0.04, 4, 8);
+    const beltMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.6, flatShading: true });
+    const belt = new THREE.Mesh(beltGeo, beltMat);
+    belt.position.set(0, 0.6, 0);
+    belt.rotation.x = Math.PI / 2;
+    belt.scale.set(1, 1, 0.6);
+    meshGroup.add(belt);
+
+    // Pouch on back
+    const pouchGeo = new THREE.BoxGeometry(0.25, 0.22, 0.12);
+    const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, flatShading: true });
+    const pouch = new THREE.Mesh(pouchGeo, pouchMat);
+    pouch.position.set(0, 0.95, 0.28);
+    meshGroup.add(pouch);
+
+    // Head: low-poly icosahedron (sphere-like, not cubic)
+    const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8, flatShading: true });
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.y = 1.6;
+    head.castShadow = true;
+    meshGroup.add(head);
+
+    // Helmet brim (flat cylinder on top)
+    const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
+    const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
+    const helmet = new THREE.Mesh(helmetGeo, helmetMat);
+    helmet.position.set(0, 1.62, -0.02);
+    meshGroup.add(helmet);
+
+    if (botClass.id === 'assault') {
+      const maskGeo = new THREE.BoxGeometry(0.44, 0.35, 0.08);
+      const maskMat = new THREE.MeshBasicMaterial({ color: 0xf1f5f9 });
+      const mask = new THREE.Mesh(maskGeo, maskMat);
+      mask.position.set(0, 1.6, 0.26);
+      meshGroup.add(mask);
+    } else if (botClass.id === 'recon') {
+      const ghillieGeo = new THREE.BoxGeometry(0.58, 0.58, 0.58);
+      const ghillieMat = new THREE.MeshStandardMaterial({ color: 0x14532d, roughness: 1.0 });
+      const ghillie = new THREE.Mesh(ghillieGeo, ghillieMat);
+      ghillie.position.copy(head.position);
+      meshGroup.add(ghillie);
+    } else if (botClass.id === 'heavy') {
+      const visorGeo = new THREE.BoxGeometry(0.44, 0.14, 0.08);
+      const visorMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+      const visor = new THREE.Mesh(visorGeo, visorMat);
+      visor.position.set(0, 1.62, 0.26);
+      meshGroup.add(visor);
+    } else if (botClass.id === 'skirmisher') {
+      const eyeGeo = new THREE.SphereGeometry(0.06, 4, 4);
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0xec4899 });
+      const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+      eyeL.position.set(-0.12, 1.6, 0.26);
+      const eyeR = eyeL.clone();
+      eyeR.position.x = 0.12;
+      meshGroup.add(eyeL);
+      meshGroup.add(eyeR);
+    }
+
+    // Arms: tapered cylinders instead of boxes
+    const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
+    const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(botClass.color), roughness: 0.8, flatShading: true });
+
+    // Shoulder pads
+    const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
+    const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+    const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
+    shoulderL.position.set(-0.48, 1.35, 0);
+    shoulderL.scale.set(1.2, 0.8, 1);
+    meshGroup.add(shoulderL);
+    const shoulderR = shoulderL.clone();
+    shoulderR.position.x = 0.48;
+    meshGroup.add(shoulderR);
+
+    leftArm = new THREE.Mesh(armGeo, armMat);
+    leftArm.position.set(-0.52, 1.15, 0);
+    leftArm.castShadow = true;
+    meshGroup.add(leftArm);
+
+    rightArm = new THREE.Mesh(armGeo, armMat);
+    rightArm.position.set(0.52, 1.15, 0);
+    rightArm.castShadow = true;
+    meshGroup.add(rightArm);
+
+    botGun = buildThirdPersonWeapon(botClass.primaryWeapon.id);
+    botGun.position.set(0.38, 1.05, 0.35);
+    meshGroup.add(botGun);
+
+    botHeadBox = new THREE.Mesh(
+      new THREE.SphereGeometry(0.32, 4, 4),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
+    );
+    botHeadBox.position.copy(head.position);
+    meshGroup.add(botHeadBox);
   }
-  torsoGeo.computeVertexNormals();
-  const torsoMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(botClass.color),
-    roughness: 0.8,
-    flatShading: true
-  });
-  const torso = new THREE.Mesh(torsoGeo, torsoMat);
-  torso.position.y = 0.95;
-  torso.castShadow = true;
-  torso.receiveShadow = true;
-  meshGroup.add(torso);
-
-  // Tactical belt at waist
-  const beltGeo = new THREE.TorusGeometry(0.35, 0.04, 4, 8);
-  const beltMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.6, flatShading: true });
-  const belt = new THREE.Mesh(beltGeo, beltMat);
-  belt.position.set(0, 0.6, 0);
-  belt.rotation.x = Math.PI / 2;
-  belt.scale.set(1, 1, 0.6);
-  meshGroup.add(belt);
-
-  // Pouch on back
-  const pouchGeo = new THREE.BoxGeometry(0.25, 0.22, 0.12);
-  const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, flatShading: true });
-  const pouch = new THREE.Mesh(pouchGeo, pouchMat);
-  pouch.position.set(0, 0.95, 0.28);
-  meshGroup.add(pouch);
-
-  // Head: low-poly icosahedron (sphere-like, not cubic)
-  const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
-  const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8, flatShading: true });
-  const head = new THREE.Mesh(headGeo, headMat);
-  head.position.y = 1.6;
-  head.castShadow = true;
-  meshGroup.add(head);
-
-  // Helmet brim (flat cylinder on top)
-  const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
-  const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
-  const helmet = new THREE.Mesh(helmetGeo, helmetMat);
-  helmet.position.set(0, 1.62, -0.02);
-  meshGroup.add(helmet);
-
-  if (botClass.id === 'assault') {
-    const maskGeo = new THREE.BoxGeometry(0.44, 0.35, 0.08);
-    const maskMat = new THREE.MeshBasicMaterial({ color: 0xf1f5f9 });
-    const mask = new THREE.Mesh(maskGeo, maskMat);
-    mask.position.set(0, 1.6, 0.26);
-    meshGroup.add(mask);
-  } else if (botClass.id === 'recon') {
-    const ghillieGeo = new THREE.BoxGeometry(0.58, 0.58, 0.58);
-    const ghillieMat = new THREE.MeshStandardMaterial({ color: 0x14532d, roughness: 1.0 });
-    const ghillie = new THREE.Mesh(ghillieGeo, ghillieMat);
-    ghillie.position.copy(head.position);
-    meshGroup.add(ghillie);
-  } else if (botClass.id === 'heavy') {
-    const visorGeo = new THREE.BoxGeometry(0.44, 0.14, 0.08);
-    const visorMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
-    const visor = new THREE.Mesh(visorGeo, visorMat);
-    visor.position.set(0, 1.62, 0.26);
-    meshGroup.add(visor);
-  } else if (botClass.id === 'skirmisher') {
-    const eyeGeo = new THREE.SphereGeometry(0.06, 4, 4);
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xec4899 });
-    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-    eyeL.position.set(-0.12, 1.6, 0.26);
-    const eyeR = eyeL.clone();
-    eyeR.position.x = 0.12;
-    meshGroup.add(eyeL);
-    meshGroup.add(eyeR);
-  }
-
-  // Arms: tapered cylinders instead of boxes
-  const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
-  const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(botClass.color), roughness: 0.8, flatShading: true });
-  
-  // Shoulder pads
-  const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
-  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
-  const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
-  shoulderL.position.set(-0.48, 1.35, 0);
-  shoulderL.scale.set(1.2, 0.8, 1);
-  meshGroup.add(shoulderL);
-  const shoulderR = shoulderL.clone();
-  shoulderR.position.x = 0.48;
-  meshGroup.add(shoulderR);
-
-  const leftArm = new THREE.Mesh(armGeo, armMat);
-  leftArm.position.set(-0.52, 1.15, 0);
-  leftArm.castShadow = true;
-  meshGroup.add(leftArm);
-
-  const rightArm = new THREE.Mesh(armGeo, armMat);
-  rightArm.position.set(0.52, 1.15, 0);
-  rightArm.castShadow = true;
-  meshGroup.add(rightArm);
-
-  const botGun = buildThirdPersonWeapon(botClass.primaryWeapon.id);
-  botGun.position.set(0.38, 1.05, 0.35);
-  meshGroup.add(botGun);
 
   meshGroup.position.copy(botSpawn);
   scene.add(meshGroup);
-
-  const botHeadBox = new THREE.Mesh(
-    new THREE.SphereGeometry(0.32, 4, 4),
-    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
-  );
-  botHeadBox.position.copy(head.position);
-  meshGroup.add(botHeadBox);
 
   return {
     id: `bot_${index}`,
@@ -385,7 +540,7 @@ export const createBot = (
     respawnTimer: 0,
     meshGroup,
     headMesh: botHeadBox,
-    torsoMesh: torso,
+    torsoMesh,
     leftLeg,
     rightLeg,
     leftArm,
@@ -393,6 +548,9 @@ export const createBot = (
     botGunMesh: botGun,
     walkAnimPhase: 0,
     flinchTimer: 0,
+    characterInstance,
+    useGLTFModel: !!characterInstance,
+    lastAnimState: null,
     position: botSpawn.clone(),
     velocity: new THREE.Vector3(),
     rotationY: Math.random() * Math.PI * 2,
@@ -910,139 +1068,174 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     console.log('[GAME] init — isCampaign:', config.isCampaign, 'mapId:', config.mapId, 'scoreLimit:', config.scoreLimit, 'botCount:', config.botCount);
     const game = gameRef.current;
 
+    // Kick off async preload of the GLTF character model. The model loads
+    // in the background; bots created before it finishes use the procedural
+    // fallback, and bots created after use the real GLTF soldier with
+    // skeletal animations. Subsequent matches reuse the cached model.
+    preloadCharacterModel().catch(err => {
+      console.warn('[GAME] Character model preload failed; will use procedural fallback.', err);
+    });
+
     // Build high-detail low-poly tactical soldier mesh visual representation of other real players
     const buildOtherPlayerMesh = (classId: string, name: string, activeWeaponId?: string) => {
       const meshGroup = new THREE.Group();
       const charClass = CLASSES.find(c => c.id === classId) || CLASSES[0];
-      
-      // 1. Combat Boots (Feet at y = 0.1)
-      const bootGeo = new THREE.CylinderGeometry(0.15, 0.16, 0.25, 6);
-      const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
-      const bootL = new THREE.Mesh(bootGeo, bootMat);
-      bootL.position.set(-0.2, 0.125, 0.02);
-      const bootR = bootL.clone();
-      bootR.position.x = 0.2;
-      meshGroup.add(bootL);
-      meshGroup.add(bootR);
-
-      // 2. Armored Legs: hexagonal cylinders with kneepads
-      const legGeo = new THREE.CylinderGeometry(0.14, 0.12, 0.65, 6);
-      const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
-      const legL = new THREE.Mesh(legGeo, legMat);
-      legL.position.set(-0.2, 0.5, 0);
-      const legR = legL.clone();
-      legR.position.x = 0.2;
-      meshGroup.add(legL);
-      meshGroup.add(legR);
-
-      // Kneepads
-      const kneeGeo = new THREE.SphereGeometry(0.07, 4, 3);
-      const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
-      const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
-      kneeL.position.set(-0.2, 0.55, 0.12);
-      kneeL.scale.set(1, 0.8, 0.6);
-      const kneeR = kneeL.clone();
-      kneeR.position.x = 0.2;
-      meshGroup.add(kneeL);
-      meshGroup.add(kneeR);
-
-      // Upper Body Group (pivot at Y = 1.15 for pitch tilting)
-      const upperBodyGroup = new THREE.Group();
-      upperBodyGroup.position.set(0, 1.15, 0);
-      meshGroup.add(upperBodyGroup);
-
-      // 3. Tactical Body Armor / Kevlar Vest - tapered torso
-      const torsoGeo = new THREE.BoxGeometry(0.85, 0.85, 0.55);
-      const torsoPosAttr = torsoGeo.attributes.position;
-      for (let i = 0; i < torsoPosAttr.count; i++) {
-        const y = torsoPosAttr.getY(i);
-        const normalizedY = (y + 0.425) / 0.85;
-        const taperFactor = 0.7 + 0.3 * normalizedY;
-        torsoPosAttr.setX(i, torsoPosAttr.getX(i) * taperFactor);
-        if (normalizedY > 0.7) {
-          torsoPosAttr.setZ(i, torsoPosAttr.getZ(i) - (normalizedY - 0.7) * 0.15);
-        }
-      }
-      torsoGeo.computeVertexNormals();
-      const torsoMat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(charClass.color),
-        roughness: 0.7,
-        flatShading: true
-      });
-      const torso = new THREE.Mesh(torsoGeo, torsoMat);
-      torso.position.set(0, 0, 0);
-      torso.castShadow = true;
-      torso.receiveShadow = true;
-      upperBodyGroup.add(torso);
-
-      // Chest ammo pouches
-      const pouchGeo = new THREE.BoxGeometry(0.22, 0.25, 0.15);
-      const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
-      const pouch1 = new THREE.Mesh(pouchGeo, pouchMat);
-      pouch1.position.set(-0.22, 0, 0.3);
-      const pouch2 = pouch1.clone();
-      pouch2.position.x = 0.22;
-      upperBodyGroup.add(pouch1);
-      upperBodyGroup.add(pouch2);
-
-      // Arms: tapered cylinders with shoulder pads
-      const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
-      const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
-      const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
-      shoulderL.position.set(-0.48, 0.22, 0);
-      shoulderL.scale.set(1.2, 0.8, 1);
-      upperBodyGroup.add(shoulderL);
-      const shoulderR = shoulderL.clone();
-      shoulderR.position.x = 0.48;
-      upperBodyGroup.add(shoulderR);
-
-      const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
-      const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(charClass.color), roughness: 0.8, flatShading: true });
-      const leftArm = new THREE.Mesh(armGeo, armMat);
-      leftArm.position.set(-0.52, 0, 0);
-      leftArm.castShadow = true;
-      upperBodyGroup.add(leftArm);
-
-      const rightArm = new THREE.Mesh(armGeo, armMat);
-      rightArm.position.set(0.52, 0, 0);
-      rightArm.castShadow = true;
-      upperBodyGroup.add(rightArm);
-
-      // 4. Head: low-poly icosahedron with helmet
-      const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
-      const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7, flatShading: true });
-      const head = new THREE.Mesh(headGeo, headMat);
-      head.position.set(0, 0.55, 0);
-      head.castShadow = true;
-      upperBodyGroup.add(head);
-
-      // Helmet shell
-      const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
-      const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
-      const helmet = new THREE.Mesh(helmetGeo, helmetMat);
-      helmet.position.set(0, 0.57, -0.02);
-      upperBodyGroup.add(helmet);
-
-      // Glowing visor strip across helmet face
-      const visorGeo = new THREE.BoxGeometry(0.44, 0.12, 0.08);
-      const visorMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(charClass.accentColor || '#38bdf8') });
-      const visor = new THREE.Mesh(visorGeo, visorMat);
-      visor.position.set(0, 0.57, 0.26);
-      upperBodyGroup.add(visor);
-
-      // Invisible head hitbox for precise headshots
-      const headHitbox = new THREE.Mesh(
-        new THREE.SphereGeometry(0.32, 4, 4),
-        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
-      );
-      headHitbox.position.set(0, 0.55, 0);
-      upperBodyGroup.add(headHitbox);
-
-      // 5. 3D Weapon Model in hand
       const initialWepId = activeWeaponId || charClass.primaryWeapon?.id || 'm4_assault';
-      const weaponMesh = buildThirdPersonWeapon(initialWepId);
-      weaponMesh.position.set(0.38, -0.1, 0.35);
-      upperBodyGroup.add(weaponMesh);
+
+      let characterInstance: CharacterInstance | null = null;
+      let upperBodyGroup: THREE.Group;
+      let headMesh: THREE.Mesh;
+      let torsoMesh: THREE.Mesh;
+      let weaponMesh: THREE.Group | THREE.Mesh;
+
+      // Try GLTF character model first; fall back to procedural if not loaded.
+      const gltfBuild = tryBuildGLTFCharacter(meshGroup, new THREE.Color(charClass.color));
+      if (gltfBuild) {
+        characterInstance = gltfBuild.characterInstance;
+        headMesh = gltfBuild.headMesh;
+        torsoMesh = gltfBuild.torsoMesh;
+
+        // Empty upper body group — pitch tilting is a no-op for GLTF
+        // characters (the whole body turns via meshGroup.rotation.y). We
+        // still return a Group so callers that set upperBodyGroup.rotation.x
+        // don't crash.
+        upperBodyGroup = new THREE.Group();
+        upperBodyGroup.position.set(0, 1.15, 0);
+        meshGroup.add(upperBodyGroup);
+
+        weaponMesh = buildThirdPersonWeapon(initialWepId);
+        attachWeaponToGLTFCharacter(meshGroup, characterInstance, weaponMesh);
+      } else {
+        // --- Procedural low-poly character (fallback) ---
+        // 1. Combat Boots (Feet at y = 0.1)
+        const bootGeo = new THREE.CylinderGeometry(0.15, 0.16, 0.25, 6);
+        const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
+        const bootL = new THREE.Mesh(bootGeo, bootMat);
+        bootL.position.set(-0.2, 0.125, 0.02);
+        const bootR = bootL.clone();
+        bootR.position.x = 0.2;
+        meshGroup.add(bootL);
+        meshGroup.add(bootR);
+
+        // 2. Armored Legs: hexagonal cylinders with kneepads
+        const legGeo = new THREE.CylinderGeometry(0.14, 0.12, 0.65, 6);
+        const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
+        const legL = new THREE.Mesh(legGeo, legMat);
+        legL.position.set(-0.2, 0.5, 0);
+        const legR = legL.clone();
+        legR.position.x = 0.2;
+        meshGroup.add(legL);
+        meshGroup.add(legR);
+
+        // Kneepads
+        const kneeGeo = new THREE.SphereGeometry(0.07, 4, 3);
+        const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+        const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
+        kneeL.position.set(-0.2, 0.55, 0.12);
+        kneeL.scale.set(1, 0.8, 0.6);
+        const kneeR = kneeL.clone();
+        kneeR.position.x = 0.2;
+        meshGroup.add(kneeL);
+        meshGroup.add(kneeR);
+
+        // Upper Body Group (pivot at Y = 1.15 for pitch tilting)
+        upperBodyGroup = new THREE.Group();
+        upperBodyGroup.position.set(0, 1.15, 0);
+        meshGroup.add(upperBodyGroup);
+
+        // 3. Tactical Body Armor / Kevlar Vest - tapered torso
+        const torsoGeo = new THREE.BoxGeometry(0.85, 0.85, 0.55);
+        const torsoPosAttr = torsoGeo.attributes.position;
+        for (let i = 0; i < torsoPosAttr.count; i++) {
+          const y = torsoPosAttr.getY(i);
+          const normalizedY = (y + 0.425) / 0.85;
+          const taperFactor = 0.7 + 0.3 * normalizedY;
+          torsoPosAttr.setX(i, torsoPosAttr.getX(i) * taperFactor);
+          if (normalizedY > 0.7) {
+            torsoPosAttr.setZ(i, torsoPosAttr.getZ(i) - (normalizedY - 0.7) * 0.15);
+          }
+        }
+        torsoGeo.computeVertexNormals();
+        const torsoMat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(charClass.color),
+          roughness: 0.7,
+          flatShading: true
+        });
+        torsoMesh = new THREE.Mesh(torsoGeo, torsoMat);
+        torsoMesh.position.set(0, 0, 0);
+        torsoMesh.castShadow = true;
+        torsoMesh.receiveShadow = true;
+        upperBodyGroup.add(torsoMesh);
+
+        // Chest ammo pouches
+        const pouchGeo = new THREE.BoxGeometry(0.22, 0.25, 0.15);
+        const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
+        const pouch1 = new THREE.Mesh(pouchGeo, pouchMat);
+        pouch1.position.set(-0.22, 0, 0.3);
+        const pouch2 = pouch1.clone();
+        pouch2.position.x = 0.22;
+        upperBodyGroup.add(pouch1);
+        upperBodyGroup.add(pouch2);
+
+        // Arms: tapered cylinders with shoulder pads
+        const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
+        const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+        const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
+        shoulderL.position.set(-0.48, 0.22, 0);
+        shoulderL.scale.set(1.2, 0.8, 1);
+        upperBodyGroup.add(shoulderL);
+        const shoulderR = shoulderL.clone();
+        shoulderR.position.x = 0.48;
+        upperBodyGroup.add(shoulderR);
+
+        const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
+        const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(charClass.color), roughness: 0.8, flatShading: true });
+        const leftArm = new THREE.Mesh(armGeo, armMat);
+        leftArm.position.set(-0.52, 0, 0);
+        leftArm.castShadow = true;
+        upperBodyGroup.add(leftArm);
+
+        const rightArm = new THREE.Mesh(armGeo, armMat);
+        rightArm.position.set(0.52, 0, 0);
+        rightArm.castShadow = true;
+        upperBodyGroup.add(rightArm);
+
+        // 4. Head: low-poly icosahedron with helmet
+        const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7, flatShading: true });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.set(0, 0.55, 0);
+        head.castShadow = true;
+        upperBodyGroup.add(head);
+
+        // Helmet shell
+        const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
+        const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
+        const helmet = new THREE.Mesh(helmetGeo, helmetMat);
+        helmet.position.set(0, 0.57, -0.02);
+        upperBodyGroup.add(helmet);
+
+        // Glowing visor strip across helmet face
+        const visorGeo = new THREE.BoxGeometry(0.44, 0.12, 0.08);
+        const visorMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(charClass.accentColor || '#38bdf8') });
+        const visor = new THREE.Mesh(visorGeo, visorMat);
+        visor.position.set(0, 0.57, 0.26);
+        upperBodyGroup.add(visor);
+
+        // Invisible head hitbox for precise headshots
+        const headHitbox = new THREE.Mesh(
+          new THREE.SphereGeometry(0.32, 4, 4),
+          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
+        );
+        headHitbox.position.set(0, 0.55, 0);
+        upperBodyGroup.add(headHitbox);
+        headMesh = headHitbox;
+
+        // 5. 3D Weapon Model in hand
+        weaponMesh = buildThirdPersonWeapon(initialWepId);
+        weaponMesh.position.set(0.38, -0.1, 0.35);
+        upperBodyGroup.add(weaponMesh);
+      }
 
       // Floating billboarded CanvasTexture nametag overlay with health bar
       const canvas = document.createElement('canvas');
@@ -1067,7 +1260,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       sprite.scale.set(1.4, 0.35, 1);
       meshGroup.add(sprite);
 
-      return { meshGroup, upperBodyGroup, headMesh: headHitbox, torsoMesh: torso, weaponMesh, activeWeaponId: initialWepId };
+      return { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId: initialWepId, characterInstance };
     };
 
     // WebSocket Multiplayer Connection setup
@@ -1168,7 +1361,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               }
               let pObj = game.otherPlayers.get(pData.id);
               if (!pObj) {
-                const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId } = buildOtherPlayerMesh(pData.classId, pData.name, pData.activeWeaponId);
+                const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId, pData.name, pData.activeWeaponId);
                 meshGroup.position.set(pData.x, Math.max(0, pData.y - 1.5), pData.z);
                 meshGroup.rotation.y = (pData.yaw || 0) + Math.PI;
                 if (upperBodyGroup) upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0)));
@@ -1183,6 +1376,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   weaponMesh,
                   headMesh,
                   torsoMesh,
+                  characterInstance,
+                  lastAnimState: null as AnimName | null,
                   position: new THREE.Vector3(pData.x, pData.y, pData.z),
                   yaw: pData.yaw || 0,
                   pitch: pData.pitch || 0,
@@ -1238,7 +1433,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
             let pObj = game.otherPlayers.get(pData.id);
             if (!pObj) {
-              const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId } = buildOtherPlayerMesh(pData.classId, pData.name, pData.activeWeaponId);
+              const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId, pData.name, pData.activeWeaponId);
               meshGroup.position.set(pData.x, Math.max(0, pData.y - 1.5), pData.z);
               meshGroup.rotation.y = (pData.yaw || 0) + Math.PI;
               if (upperBodyGroup) upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0)));
@@ -1253,6 +1448,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 weaponMesh,
                 headMesh,
                 torsoMesh,
+                characterInstance,
+                lastAnimState: null as AnimName | null,
                 position: new THREE.Vector3(pData.x, pData.y, pData.z),
                 yaw: pData.yaw || 0,
                 pitch: pData.pitch || 0,
@@ -1314,7 +1511,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               pObj.meshGroup.visible = pObj.health > 0 && !pObj.isSpectator;
             } else {
               // If we received an update for an un-tracked player, create them
-              const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId } = buildOtherPlayerMesh(pData.classId || 'assault', pData.name || 'Soldier', pData.activeWeaponId);
+              const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId || 'assault', pData.name || 'Soldier', pData.activeWeaponId);
               meshGroup.position.set(pData.x, Math.max(0, (pData.y || 1.5) - 1.5), pData.z);
               meshGroup.rotation.y = (pData.yaw || 0) + Math.PI;
               if (upperBodyGroup) upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0)));
@@ -1329,6 +1526,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 weaponMesh,
                 headMesh,
                 torsoMesh,
+                characterInstance,
+                lastAnimState: null as AnimName | null,
                 position: new THREE.Vector3(pData.x, pData.y, pData.z),
                 yaw: pData.yaw || 0,
                 pitch: pData.pitch || 0,
@@ -1844,15 +2043,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       for (let pi = 0; pi < 6; pi++) {
         const pd = patrolPaths[pi];
         const patrolMesh = new THREE.Group();
-        const eMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
-        const eHeadMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
-        const eTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), eMat); eTorso.position.y = 1.1; eTorso.castShadow = true; patrolMesh.add(eTorso);
-        const eHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), eHeadMat); eHead.position.y = 1.7; eHead.castShadow = true; patrolMesh.add(eHead);
-        const eLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
-        const eLL = new THREE.Mesh(eLegGeo, eMat); eLL.position.set(-0.15, 0.35, 0); patrolMesh.add(eLL);
-        const eRL = new THREE.Mesh(eLegGeo, eMat); eRL.position.set(0.15, 0.35, 0); patrolMesh.add(eRL);
-        const eGun = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.45), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5 }));
-        eGun.position.set(0.4, 1.0, -0.25); patrolMesh.add(eGun);
+        let eHead: THREE.Mesh;
+        let eTorso: THREE.Mesh;
+        let eLL: THREE.Mesh;
+        let eRL: THREE.Mesh;
+        let eGun: THREE.Group | THREE.Mesh;
+        let patrolCharacterInstance: CharacterInstance | null = null;
+
+        const pGltfBuild = tryBuildGLTFCharacter(patrolMesh, new THREE.Color(0x8b0000));
+        if (pGltfBuild) {
+          patrolCharacterInstance = pGltfBuild.characterInstance;
+          eHead = pGltfBuild.headMesh;
+          eTorso = pGltfBuild.torsoMesh;
+          eLL = pGltfBuild.leftLeg;
+          eRL = pGltfBuild.rightLeg;
+          eGun = buildThirdPersonWeapon('m4_assault');
+          attachWeaponToGLTFCharacter(patrolMesh, patrolCharacterInstance, eGun);
+        } else {
+          const eMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
+          const eHeadMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
+          eTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), eMat); eTorso.position.y = 1.1; eTorso.castShadow = true; patrolMesh.add(eTorso);
+          eHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), eHeadMat); eHead.position.y = 1.7; eHead.castShadow = true; patrolMesh.add(eHead);
+          const eLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
+          eLL = new THREE.Mesh(eLegGeo, eMat); eLL.position.set(-0.15, 0.35, 0); patrolMesh.add(eLL);
+          eRL = new THREE.Mesh(eLegGeo, eMat); eRL.position.set(0.15, 0.35, 0); patrolMesh.add(eRL);
+          eGun = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.45), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5 }));
+          eGun.position.set(0.4, 1.0, -0.25); patrolMesh.add(eGun);
+        }
         patrolMesh.position.copy(pd.startPos);
         scene.add(patrolMesh);
 
@@ -1871,7 +2088,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           botGunMesh: eGun,
           walkAnimPhase: 0,
           flinchTimer: 0,
-          classConfig: CLASSES[0], // assault class stats
+          characterInstance: patrolCharacterInstance, useGLTFModel: !!patrolCharacterInstance, lastAnimState: null,
+          classConfig: CLASSES[0], activeWeapon: CLASSES[0].primaryWeapon, // assault class stats
+          isPrimary: true, isDead: false, respawnTimer: 0,
           kills: 0, deaths: 0, score: 0,
           targetEntityId: null,
           targetSelectionTimer: 0,
@@ -2012,168 +2231,193 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       const meshGroup = new THREE.Group();
 
-      // LOW-POLY ORGANIC CHARACTER MODEL
-      // 1. Legs: hexagonal cylinders (pivotable around hip height y = 0.6)
-      const legGeo = new THREE.CylinderGeometry(0.15, 0.13, 0.6, 6);
-      const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
-      
-      const leftLeg = new THREE.Mesh(legGeo, legMat);
-      leftLeg.position.set(-0.24, 0.3, 0);
-      leftLeg.castShadow = true;
-      meshGroup.add(leftLeg);
+      // Try GLTF character model first; fall back to procedural if not loaded.
+      const gltfBuild = tryBuildGLTFCharacter(meshGroup, new THREE.Color(botClass.color));
 
-      const rightLeg = new THREE.Mesh(legGeo, legMat);
-      rightLeg.position.set(0.24, 0.3, 0);
-      rightLeg.castShadow = true;
-      meshGroup.add(rightLeg);
+      let characterInstance: CharacterInstance | null = null;
+      let torsoMesh: THREE.Mesh;
+      let leftLeg: THREE.Mesh;
+      let rightLeg: THREE.Mesh;
+      let leftArm: THREE.Mesh;
+      let rightArm: THREE.Mesh;
+      let botGun: THREE.Group | THREE.Mesh;
+      let botHeadBox: THREE.Mesh;
 
-      // Kneepads
-      const kneeGeo = new THREE.SphereGeometry(0.08, 4, 3);
-      const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
-      const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
-      kneeL.position.set(-0.24, 0.35, 0.12);
-      kneeL.scale.set(1, 0.8, 0.6);
-      meshGroup.add(kneeL);
-      const kneeR = kneeL.clone();
-      kneeR.position.x = 0.24;
-      meshGroup.add(kneeR);
+      if (gltfBuild) {
+        characterInstance = gltfBuild.characterInstance;
+        torsoMesh = gltfBuild.torsoMesh;
+        leftLeg = gltfBuild.leftLeg;
+        rightLeg = gltfBuild.rightLeg;
+        leftArm = gltfBuild.leftArm;
+        rightArm = gltfBuild.rightArm;
+        botHeadBox = gltfBuild.headMesh;
 
-      // Boots
-      const bootGeo = new THREE.CylinderGeometry(0.16, 0.17, 0.15, 6);
-      const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
-      const bootL = new THREE.Mesh(bootGeo, bootMat);
-      bootL.position.set(-0.24, 0.075, 0.02);
-      meshGroup.add(bootL);
-      const bootR = bootL.clone();
-      bootR.position.x = 0.24;
-      meshGroup.add(bootR);
+        botGun = buildThirdPersonWeapon(botClass.primaryWeapon.id);
+        attachWeaponToGLTFCharacter(meshGroup, characterInstance, botGun);
+      } else {
+        // --- Procedural low-poly character (fallback) ---
+        // 1. Legs: hexagonal cylinders (pivotable around hip height y = 0.6)
+        const legGeo = new THREE.CylinderGeometry(0.15, 0.13, 0.6, 6);
+        const legMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, flatShading: true });
 
-      // 2. Torso: tapered body (wider shoulders, narrow waist)
-      const torsoGeo = new THREE.BoxGeometry(0.85, 0.75, 0.5);
-      const torsoPos = torsoGeo.attributes.position;
-      for (let i = 0; i < torsoPos.count; i++) {
-        const y = torsoPos.getY(i);
-        const normalizedY = (y + 0.375) / 0.75;
-        const taperFactor = 0.7 + 0.3 * normalizedY;
-        torsoPos.setX(i, torsoPos.getX(i) * taperFactor);
-        if (normalizedY > 0.7) {
-          torsoPos.setZ(i, torsoPos.getZ(i) - (normalizedY - 0.7) * 0.15);
+        leftLeg = new THREE.Mesh(legGeo, legMat);
+        leftLeg.position.set(-0.24, 0.3, 0);
+        leftLeg.castShadow = true;
+        meshGroup.add(leftLeg);
+
+        rightLeg = new THREE.Mesh(legGeo, legMat);
+        rightLeg.position.set(0.24, 0.3, 0);
+        rightLeg.castShadow = true;
+        meshGroup.add(rightLeg);
+
+        // Kneepads
+        const kneeGeo = new THREE.SphereGeometry(0.08, 4, 3);
+        const kneeMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+        const kneeL = new THREE.Mesh(kneeGeo, kneeMat);
+        kneeL.position.set(-0.24, 0.35, 0.12);
+        kneeL.scale.set(1, 0.8, 0.6);
+        meshGroup.add(kneeL);
+        const kneeR = kneeL.clone();
+        kneeR.position.x = 0.24;
+        meshGroup.add(kneeR);
+
+        // Boots
+        const bootGeo = new THREE.CylinderGeometry(0.16, 0.17, 0.15, 6);
+        const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9, flatShading: true });
+        const bootL = new THREE.Mesh(bootGeo, bootMat);
+        bootL.position.set(-0.24, 0.075, 0.02);
+        meshGroup.add(bootL);
+        const bootR = bootL.clone();
+        bootR.position.x = 0.24;
+        meshGroup.add(bootR);
+
+        // 2. Torso: tapered body (wider shoulders, narrow waist)
+        const torsoGeo = new THREE.BoxGeometry(0.85, 0.75, 0.5);
+        const torsoPos = torsoGeo.attributes.position;
+        for (let i = 0; i < torsoPos.count; i++) {
+          const y = torsoPos.getY(i);
+          const normalizedY = (y + 0.375) / 0.75;
+          const taperFactor = 0.7 + 0.3 * normalizedY;
+          torsoPos.setX(i, torsoPos.getX(i) * taperFactor);
+          if (normalizedY > 0.7) {
+            torsoPos.setZ(i, torsoPos.getZ(i) - (normalizedY - 0.7) * 0.15);
+          }
         }
+        torsoGeo.computeVertexNormals();
+        const torsoMat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(botClass.color),
+          roughness: 0.8,
+          flatShading: true
+        });
+        torsoMesh = new THREE.Mesh(torsoGeo, torsoMat);
+        torsoMesh.position.y = 0.95;
+        torsoMesh.castShadow = true;
+        torsoMesh.receiveShadow = true;
+        meshGroup.add(torsoMesh);
+
+        // Tactical belt
+        const beltGeo = new THREE.TorusGeometry(0.35, 0.04, 4, 8);
+        const beltMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.6, flatShading: true });
+        const belt = new THREE.Mesh(beltGeo, beltMat);
+        belt.position.set(0, 0.6, 0);
+        belt.rotation.x = Math.PI / 2;
+        belt.scale.set(1, 1, 0.6);
+        meshGroup.add(belt);
+
+        // Tactical chest pouch
+        const pouchGeo = new THREE.BoxGeometry(0.25, 0.22, 0.12);
+        const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, flatShading: true });
+        const pouch = new THREE.Mesh(pouchGeo, pouchMat);
+        pouch.position.set(0, 0.95, 0.28);
+        meshGroup.add(pouch);
+
+        // 3. Head: low-poly icosahedron (not cubic)
+        const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8, flatShading: true });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 1.6;
+        head.castShadow = true;
+        meshGroup.add(head);
+
+        // Helmet shell
+        const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
+        const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
+        const helmet = new THREE.Mesh(helmetGeo, helmetMat);
+        helmet.position.set(0, 1.62, -0.02);
+        meshGroup.add(helmet);
+
+        // Custom helmet features based on class
+        if (botClass.id === 'assault') {
+          const maskGeo = new THREE.BoxGeometry(0.44, 0.35, 0.08);
+          const maskMat = new THREE.MeshBasicMaterial({ color: 0xf1f5f9 }); // White skull mask
+          const mask = new THREE.Mesh(maskGeo, maskMat);
+          mask.position.set(0, 1.6, 0.26);
+          meshGroup.add(mask);
+        } else if (botClass.id === 'recon') {
+          const ghillieGeo = new THREE.BoxGeometry(0.58, 0.58, 0.58);
+          const ghillieMat = new THREE.MeshStandardMaterial({ color: 0x14532d, roughness: 1.0 });
+          const ghillie = new THREE.Mesh(ghillieGeo, ghillieMat);
+          ghillie.position.copy(head.position);
+          meshGroup.add(ghillie);
+        } else if (botClass.id === 'heavy') {
+          const visorGeo = new THREE.BoxGeometry(0.44, 0.14, 0.08);
+          const visorMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b }); // Gold visor
+          const visor = new THREE.Mesh(visorGeo, visorMat);
+          visor.position.set(0, 1.62, 0.26);
+          meshGroup.add(visor);
+        } else if (botClass.id === 'skirmisher') {
+          const eyeGeo = new THREE.SphereGeometry(0.06, 4, 4);
+          const eyeMat = new THREE.MeshBasicMaterial({ color: 0xec4899 });
+          const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+          eyeL.position.set(-0.12, 1.6, 0.26);
+          const eyeR = eyeL.clone();
+          eyeR.position.x = 0.12;
+          meshGroup.add(eyeL);
+          meshGroup.add(eyeR);
+        }
+
+        // 4. Arms: tapered cylinders (pivotable around shoulder height y = 1.15)
+        const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
+        const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(botClass.color), roughness: 0.8, flatShading: true });
+
+        // Shoulder pads
+        const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
+        const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
+        const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
+        shoulderL.position.set(-0.48, 1.35, 0);
+        shoulderL.scale.set(1.2, 0.8, 1);
+        meshGroup.add(shoulderL);
+        const shoulderR = shoulderL.clone();
+        shoulderR.position.x = 0.48;
+        meshGroup.add(shoulderR);
+
+        leftArm = new THREE.Mesh(armGeo, armMat);
+        leftArm.position.set(-0.52, 1.15, 0);
+        leftArm.castShadow = true;
+        meshGroup.add(leftArm);
+
+        rightArm = new THREE.Mesh(armGeo, armMat);
+        rightArm.position.set(0.52, 1.15, 0);
+        rightArm.castShadow = true;
+        meshGroup.add(rightArm);
+
+        // 5. Bot 3D Weapon
+        botGun = buildThirdPersonWeapon(botClass.primaryWeapon.id);
+        botGun.position.set(0.38, 1.05, 0.35);
+        meshGroup.add(botGun);
+
+        // Hitbox helper for headshots
+        botHeadBox = new THREE.Mesh(
+          new THREE.SphereGeometry(0.32, 4, 4),
+          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
+        );
+        botHeadBox.position.copy(head.position);
+        meshGroup.add(botHeadBox);
       }
-      torsoGeo.computeVertexNormals();
-      const torsoMat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(botClass.color),
-        roughness: 0.8,
-        flatShading: true
-      });
-      const torso = new THREE.Mesh(torsoGeo, torsoMat);
-      torso.position.y = 0.95;
-      torso.castShadow = true;
-      torso.receiveShadow = true;
-      meshGroup.add(torso);
-
-      // Tactical belt
-      const beltGeo = new THREE.TorusGeometry(0.35, 0.04, 4, 8);
-      const beltMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.6, flatShading: true });
-      const belt = new THREE.Mesh(beltGeo, beltMat);
-      belt.position.set(0, 0.6, 0);
-      belt.rotation.x = Math.PI / 2;
-      belt.scale.set(1, 1, 0.6);
-      meshGroup.add(belt);
-
-      // Tactical chest pouch
-      const pouchGeo = new THREE.BoxGeometry(0.25, 0.22, 0.12);
-      const pouchMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, flatShading: true });
-      const pouch = new THREE.Mesh(pouchGeo, pouchMat);
-      pouch.position.set(0, 0.95, 0.28);
-      meshGroup.add(pouch);
-
-      // 3. Head: low-poly icosahedron (not cubic)
-      const headGeo = new THREE.IcosahedronGeometry(0.28, 1);
-      const headMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8, flatShading: true });
-      const head = new THREE.Mesh(headGeo, headMat);
-      head.position.y = 1.6;
-      head.castShadow = true;
-      meshGroup.add(head);
-
-      // Helmet shell
-      const helmetGeo = new THREE.SphereGeometry(0.30, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.6);
-      const helmetMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, flatShading: true });
-      const helmet = new THREE.Mesh(helmetGeo, helmetMat);
-      helmet.position.set(0, 1.62, -0.02);
-      meshGroup.add(helmet);
-
-      // Custom helmet features based on class
-      if (botClass.id === 'assault') {
-        const maskGeo = new THREE.BoxGeometry(0.44, 0.35, 0.08);
-        const maskMat = new THREE.MeshBasicMaterial({ color: 0xf1f5f9 }); // White skull mask
-        const mask = new THREE.Mesh(maskGeo, maskMat);
-        mask.position.set(0, 1.6, 0.26);
-        meshGroup.add(mask);
-      } else if (botClass.id === 'recon') {
-        const ghillieGeo = new THREE.BoxGeometry(0.58, 0.58, 0.58);
-        const ghillieMat = new THREE.MeshStandardMaterial({ color: 0x14532d, roughness: 1.0 });
-        const ghillie = new THREE.Mesh(ghillieGeo, ghillieMat);
-        ghillie.position.copy(head.position);
-        meshGroup.add(ghillie);
-      } else if (botClass.id === 'heavy') {
-        const visorGeo = new THREE.BoxGeometry(0.44, 0.14, 0.08);
-        const visorMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b }); // Gold visor
-        const visor = new THREE.Mesh(visorGeo, visorMat);
-        visor.position.set(0, 1.62, 0.26);
-        meshGroup.add(visor);
-      } else if (botClass.id === 'skirmisher') {
-        const eyeGeo = new THREE.SphereGeometry(0.06, 4, 4);
-        const eyeMat = new THREE.MeshBasicMaterial({ color: 0xec4899 });
-        const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-        eyeL.position.set(-0.12, 1.6, 0.26);
-        const eyeR = eyeL.clone();
-        eyeR.position.x = 0.12;
-        meshGroup.add(eyeL);
-        meshGroup.add(eyeR);
-      }
-
-      // 4. Arms: tapered cylinders (pivotable around shoulder height y = 1.15)
-      const armGeo = new THREE.CylinderGeometry(0.10, 0.08, 0.65, 6);
-      const armMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(botClass.color), roughness: 0.8, flatShading: true });
-
-      // Shoulder pads
-      const shoulderGeo = new THREE.SphereGeometry(0.1, 4, 3);
-      const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.7, flatShading: true });
-      const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
-      shoulderL.position.set(-0.48, 1.35, 0);
-      shoulderL.scale.set(1.2, 0.8, 1);
-      meshGroup.add(shoulderL);
-      const shoulderR = shoulderL.clone();
-      shoulderR.position.x = 0.48;
-      meshGroup.add(shoulderR);
-
-      const leftArm = new THREE.Mesh(armGeo, armMat);
-      leftArm.position.set(-0.52, 1.15, 0);
-      leftArm.castShadow = true;
-      meshGroup.add(leftArm);
-
-      const rightArm = new THREE.Mesh(armGeo, armMat);
-      rightArm.position.set(0.52, 1.15, 0);
-      rightArm.castShadow = true;
-      meshGroup.add(rightArm);
-
-      // 5. Bot 3D Weapon
-      const botGun = buildThirdPersonWeapon(botClass.primaryWeapon.id);
-      botGun.position.set(0.38, 1.05, 0.35);
-      meshGroup.add(botGun);
 
       // Positioning the overall bot mesh group
       meshGroup.position.copy(botSpawn);
       scene.add(meshGroup);
-
-      // Hitbox helper for headshots
-      const botHeadBox = new THREE.Mesh(
-        new THREE.SphereGeometry(0.32, 4, 4),
-        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, wireframe: true })
-      );
-      botHeadBox.position.copy(head.position);
-      meshGroup.add(botHeadBox);
 
       return {
         id: `bot_${index}`,
@@ -2190,7 +2434,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         respawnTimer: 0,
         meshGroup,
         headMesh: botHeadBox,
-        torsoMesh: torso,
+        torsoMesh,
         leftLeg,
         rightLeg,
         leftArm,
@@ -2198,6 +2442,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         botGunMesh: botGun,
         walkAnimPhase: 0,
         flinchTimer: 0,
+        characterInstance,
+        useGLTFModel: !!characterInstance,
+        lastAnimState: null,
         position: botSpawn.clone(),
         velocity: new THREE.Vector3(),
         rotationY: Math.random() * Math.PI * 2,
@@ -4485,8 +4732,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       for (const bot of bots) {
         if (bot.isDead) {
           bot.respawnTimer -= delta * 1000;
-          
-          // Animate bot death fall
+
+          // Animate bot death fall — tips the whole meshGroup forward.
+          // Works for both procedural and GLTF characters (the GLTF root
+          // is a child of meshGroup, so it tips with it). We deliberately
+          // do NOT call mixer.update() here, so the GLTF body holds its
+          // last pose (mid-stride if it was walking) while tipping over.
           if (bot.meshGroup.rotation.x < Math.PI / 2) {
             bot.meshGroup.rotation.x += delta * 6;
             bot.meshGroup.position.y = Math.max(0.2, bot.meshGroup.position.y - delta * 3);
@@ -4515,6 +4766,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             bot.patrolWaypoint.copy(spawn);
             bot.targetSelectionTimer = 0;
             bot.jumpTimer = 0;
+
+            // Reset GLTF animation state so the next frame transitions
+            // cleanly back to Idle (rather than resuming mid-stride).
+            if (bot.characterInstance) {
+              bot.lastAnimState = null;
+              // Reset all action weights to 0, then play Idle at weight 1.
+              for (const k of Object.keys(bot.characterInstance.actions) as AnimName[]) {
+                const a = bot.characterInstance.actions[k];
+                if (a) { a.stop(); a.reset(); a.setEffectiveWeight(0); }
+              }
+              if (bot.characterInstance.actions.Idle) {
+                bot.characterInstance.actions.Idle.setEffectiveWeight(1).play();
+                bot.characterInstance.currentAction = bot.characterInstance.actions.Idle;
+              }
+            }
           }
           continue;
         }
@@ -4884,41 +5150,73 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         bot.meshGroup.position.copy(bot.position);
 
-        // Pass 4: Bot Kinematics (Legs/Arms walking animation & Flinch reaction)
+        // Pass 4: Bot Kinematics (Animation)
         const speedSq = bot.velocity.x * bot.velocity.x + bot.velocity.z * bot.velocity.z;
         const isMoving = speedSq > 0.1;
 
-        if (isMoving) {
-          bot.meshGroup.position.y = bot.position.y + Math.abs(Math.sin(time * 0.01)) * 0.08;
-          bot.walkAnimPhase += delta * Math.sqrt(speedSq) * 3.5;
+        if (bot.characterInstance) {
+          // --- GLTF character: drive AnimationMixer ---
+          bot.characterInstance.mixer.update(delta);
 
-          if (bot.leftLeg) bot.leftLeg.rotation.x = Math.sin(bot.walkAnimPhase) * 0.6;
-          if (bot.rightLeg) bot.rightLeg.rotation.x = -Math.sin(bot.walkAnimPhase) * 0.6;
-          if (bot.leftArm) bot.leftArm.rotation.x = -Math.sin(bot.walkAnimPhase) * 0.5;
-          if (bot.rightArm) bot.rightArm.rotation.x = Math.sin(bot.walkAnimPhase) * 0.3 - 0.2;
+          // State machine: Idle / Walk / Run based on horizontal speed.
+          // The Soldier.glb Walk clip is ~1.4 m/s; Run is ~3.5 m/s. We use
+          // a threshold of 4 m/s for the Walk→Run transition.
+          const speed = Math.sqrt(speedSq);
+          let desired: AnimName = 'Idle';
+          if (isMoving) {
+            desired = speed > 4.0 ? 'Run' : 'Walk';
+          }
+          if (bot.lastAnimState !== desired) {
+            transitionTo(bot.characterInstance, desired, 0.2);
+            bot.lastAnimState = desired;
+          }
 
-          // Gentle forward tilt when moving
-          bot.meshGroup.rotation.x = 0.08;
-          const localRight = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), bot.rotationY);
-          const lateralVel = bot.velocity.dot(localRight);
-          bot.meshGroup.rotation.z = -lateralVel * 0.03;
-        } else {
+          // The mixer drives all body movement (including subtle idle
+          // breathing), so we don't apply procedural leg/arm rotation or
+          // body tilt. Keep meshGroup transform clean except for yaw which
+          // is set elsewhere.
           bot.meshGroup.position.y = bot.position.y;
+          // Don't reset rotation.x/z here — they may be set by other
+          // systems (e.g. death tip-over). The living-bot loop assumes
+          // rotation.x=0 and rotation.z=0; enforce that.
           bot.meshGroup.rotation.x = 0;
           bot.meshGroup.rotation.z = 0;
+        } else {
+          // --- Procedural character: existing walk cycle ---
+          if (isMoving) {
+            bot.meshGroup.position.y = bot.position.y + Math.abs(Math.sin(time * 0.01)) * 0.08;
+            bot.walkAnimPhase += delta * Math.sqrt(speedSq) * 3.5;
 
-          if (bot.leftLeg) bot.leftLeg.rotation.x *= 0.8;
-          if (bot.rightLeg) bot.rightLeg.rotation.x *= 0.8;
-          if (bot.leftArm) bot.leftArm.rotation.x *= 0.8;
-          if (bot.rightArm) bot.rightArm.rotation.x *= 0.8;
-        }
+            if (bot.leftLeg) bot.leftLeg.rotation.x = Math.sin(bot.walkAnimPhase) * 0.6;
+            if (bot.rightLeg) bot.rightLeg.rotation.x = -Math.sin(bot.walkAnimPhase) * 0.6;
+            if (bot.leftArm) bot.leftArm.rotation.x = -Math.sin(bot.walkAnimPhase) * 0.5;
+            if (bot.rightArm) bot.rightArm.rotation.x = Math.sin(bot.walkAnimPhase) * 0.3 - 0.2;
 
-        // Flinch reaction when taking damage
-        if (bot.flinchTimer > 0) {
-          bot.flinchTimer -= delta;
-          if (bot.torsoMesh) bot.torsoMesh.rotation.x = -0.25 * (bot.flinchTimer / 0.15);
-        } else if (bot.torsoMesh) {
-          bot.torsoMesh.rotation.x = 0;
+            // Gentle forward tilt when moving
+            bot.meshGroup.rotation.x = 0.08;
+            const localRight = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), bot.rotationY);
+            const lateralVel = bot.velocity.dot(localRight);
+            bot.meshGroup.rotation.z = -lateralVel * 0.03;
+          } else {
+            bot.meshGroup.position.y = bot.position.y;
+            bot.meshGroup.rotation.x = 0;
+            bot.meshGroup.rotation.z = 0;
+
+            if (bot.leftLeg) bot.leftLeg.rotation.x *= 0.8;
+            if (bot.rightLeg) bot.rightLeg.rotation.x *= 0.8;
+            if (bot.leftArm) bot.leftArm.rotation.x *= 0.8;
+            if (bot.rightArm) bot.rightArm.rotation.x *= 0.8;
+          }
+
+          // Flinch reaction when taking damage (procedural characters only —
+          // for GLTF characters the mixer drives the torso, so flinch would
+          // be overwritten).
+          if (bot.flinchTimer > 0) {
+            bot.flinchTimer -= delta;
+            if (bot.torsoMesh) bot.torsoMesh.rotation.x = -0.25 * (bot.flinchTimer / 0.15);
+          } else if (bot.torsoMesh) {
+            bot.torsoMesh.rotation.x = 0;
+          }
         }
       }
 
@@ -5297,15 +5595,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ];
             for (let gi = 0; gi < 4; gi++) {
               const gMesh = new THREE.Group();
-              const gMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
-              const gHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
-              const gTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), gMat); gTorso.position.y = 1.1; gTorso.castShadow = true; gMesh.add(gTorso);
-              const gHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), gHMat); gHead.position.y = 1.7; gMesh.add(gHead);
-              const gLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
-              const gLL = new THREE.Mesh(gLegGeo, gMat); gLL.position.set(-0.15, 0.35, 0); gMesh.add(gLL);
-              const gRL = new THREE.Mesh(gLegGeo, gMat); gRL.position.set(0.15, 0.35, 0); gMesh.add(gRL);
-              const gGun = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.45), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5 }));
-              gGun.position.set(0.4, 1.0, -0.25); gMesh.add(gGun);
+              let gHead: THREE.Mesh;
+              let gTorso: THREE.Mesh;
+              let gLL: THREE.Mesh;
+              let gRL: THREE.Mesh;
+              let gGun: THREE.Group | THREE.Mesh;
+              let gCharacterInstance: CharacterInstance | null = null;
+
+              const gGltfBuild = tryBuildGLTFCharacter(gMesh, new THREE.Color(0x8b0000));
+              if (gGltfBuild) {
+                gCharacterInstance = gGltfBuild.characterInstance;
+                gHead = gGltfBuild.headMesh;
+                gTorso = gGltfBuild.torsoMesh;
+                gLL = gGltfBuild.leftLeg;
+                gRL = gGltfBuild.rightLeg;
+                gGun = buildThirdPersonWeapon('m4_assault');
+                attachWeaponToGLTFCharacter(gMesh, gCharacterInstance, gGun);
+              } else {
+                const gMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
+                const gHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
+                gTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), gMat); gTorso.position.y = 1.1; gTorso.castShadow = true; gMesh.add(gTorso);
+                gHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), gHMat); gHead.position.y = 1.7; gMesh.add(gHead);
+                const gLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
+                gLL = new THREE.Mesh(gLegGeo, gMat); gLL.position.set(-0.15, 0.35, 0); gMesh.add(gLL);
+                gRL = new THREE.Mesh(gLegGeo, gMat); gRL.position.set(0.15, 0.35, 0); gMesh.add(gRL);
+                gGun = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.45), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5 }));
+                gGun.position.set(0.4, 1.0, -0.25); gMesh.add(gGun);
+              }
               gMesh.position.copy(guardPositions[gi]);
               scene.add(gMesh);
               const guard: BotEntity = {
@@ -5315,7 +5631,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 meshGroup: gMesh, headMesh: gHead, torsoMesh: gTorso,
                 leftLeg: gLL, rightLeg: gRL, leftArm: null as any, rightArm: null as any,
                 botGunMesh: gGun, walkAnimPhase: 0, flinchTimer: 0,
-                classConfig: CLASSES[0], kills: 0, deaths: 0, score: 0,
+                characterInstance: gCharacterInstance, useGLTFModel: !!gCharacterInstance, lastAnimState: null,
+                classConfig: CLASSES[0], activeWeapon: CLASSES[0].primaryWeapon,
+                isPrimary: true, isDead: false, respawnTimer: 0,
+                kills: 0, deaths: 0, score: 0,
                 targetEntityId: null, targetSelectionTimer: 0,
                 shootCooldownRemaining: 1.0, botClip: 30,
                 botIsReloading: false, botReloadTimeRemaining: 0,
@@ -5337,13 +5656,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ];
           for (let bi = 0; bi < 4; bi++) {
             const bMesh = new THREE.Group();
-            const bMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
-            const bHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
-            const bTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), bMat); bTorso.position.y = 1.1; bMesh.add(bTorso);
-            const bHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), bHMat); bHead.position.y = 1.7; bMesh.add(bHead);
-            const bLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
-            const bLL = new THREE.Mesh(bLegGeo, bMat); bLL.position.set(-0.15, 0.35, 0); bMesh.add(bLL);
-            const bRL = new THREE.Mesh(bLegGeo, bMat); bRL.position.set(0.15, 0.35, 0); bMesh.add(bRL);
+            let bHead: THREE.Mesh;
+            let bTorso: THREE.Mesh;
+            let bLL: THREE.Mesh;
+            let bRL: THREE.Mesh;
+            let bCharacterInstance: CharacterInstance | null = null;
+
+            const bGltfBuild = tryBuildGLTFCharacter(bMesh, new THREE.Color(0x8b0000));
+            if (bGltfBuild) {
+              bCharacterInstance = bGltfBuild.characterInstance;
+              bHead = bGltfBuild.headMesh;
+              bTorso = bGltfBuild.torsoMesh;
+              bLL = bGltfBuild.leftLeg;
+              bRL = bGltfBuild.rightLeg;
+              const bGun = buildThirdPersonWeapon('m4_assault');
+              attachWeaponToGLTFCharacter(bMesh, bCharacterInstance, bGun);
+            } else {
+              const bMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
+              const bHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
+              bTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), bMat); bTorso.position.y = 1.1; bMesh.add(bTorso);
+              bHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), bHMat); bHead.position.y = 1.7; bMesh.add(bHead);
+              const bLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
+              bLL = new THREE.Mesh(bLegGeo, bMat); bLL.position.set(-0.15, 0.35, 0); bMesh.add(bLL);
+              bRL = new THREE.Mesh(bLegGeo, bMat); bRL.position.set(0.15, 0.35, 0); bMesh.add(bRL);
+            }
             bMesh.position.copy(backupPosArr[bi]);
             scene.add(bMesh);
             const backupBot: BotEntity = {
@@ -5353,7 +5689,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               meshGroup: bMesh, headMesh: bHead, torsoMesh: bTorso,
               leftLeg: bLL, rightLeg: bRL, leftArm: null as any, rightArm: null as any,
               botGunMesh: null as any, walkAnimPhase: 0, flinchTimer: 0,
-              classConfig: CLASSES[0], kills: 0, deaths: 0, score: 0,
+              characterInstance: bCharacterInstance, useGLTFModel: !!bCharacterInstance, lastAnimState: null,
+              classConfig: CLASSES[0], activeWeapon: CLASSES[0].primaryWeapon,
+              isPrimary: true, isDead: false, respawnTimer: 0,
+              kills: 0, deaths: 0, score: 0,
               targetEntityId: null, targetSelectionTimer: 0,
               shootCooldownRemaining: 1, botClip: 30,
               botIsReloading: false, botReloadTimeRemaining: 0,
@@ -5552,6 +5891,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           c3DialogueSpeakerRef.current.textContent = game.c3DialogueSpeaker;
         }
       }
+
+      // Update AnimationMixer for other (multiplayer) players so their
+      // GLTF characters animate even though we only receive position
+      // snapshots over WebSocket. We infer idle vs walk from the distance
+      // moved since the last frame.
+      game.otherPlayers.forEach((p: any) => {
+        if (!p.characterInstance) return;
+        if (!p._lastFramePos) p._lastFramePos = p.position.clone();
+        const moved = p.position.distanceTo(p._lastFramePos);
+        p._lastFramePos.copy(p.position);
+        // moved is in world units per frame; convert to a rough m/s estimate
+        // (delta is capped at ~0.05s, so divide by ~0.05 to get m/s).
+        const speedMs = moved / Math.max(delta, 0.001);
+        let desired: AnimName = 'Idle';
+        if (speedMs > 0.5) desired = speedMs > 4.0 ? 'Run' : 'Walk';
+        if (p.lastAnimState !== desired) {
+          transitionTo(p.characterInstance, desired, 0.2);
+          p.lastAnimState = desired;
+        }
+        p.characterInstance.mixer.update(delta);
+      });
 
       // Render Next Frame
       if (game.renderer && game.scene && game.camera && !someoneWon) {

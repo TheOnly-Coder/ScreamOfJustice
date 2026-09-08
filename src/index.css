@@ -1,68 +1,260 @@
 @import "tailwindcss";
 
+/* ============================================================
+   SCREAM OF JUSTICE — Design System
+   A military-tactical theme: olive/tan/amber palette, monospace
+   numerics, chunky stencil-style headings. Used across all menus
+   and the in-game HUD.
+   ============================================================ */
+
+:root {
+  /* Core palette — tactical military */
+  --soj-bg-deep: #0a0e14;          /* near-black with blue undertone */
+  --soj-bg-panel: #11161f;         /* panel background */
+  --soj-bg-elev: #1a212e;          /* elevated panel (cards, modals) */
+  --soj-border: #2a3441;           /* subtle border */
+  --soj-border-bright: #3d4a5c;    /* brighter border for focus */
+
+  /* Accent — amber/gold for primary actions (military stencil vibe) */
+  --soj-accent: #f59e0b;           /* amber-500 */
+  --soj-accent-bright: #fbbf24;    /* amber-400 */
+  --soj-accent-dim: #b45309;       /* amber-700 */
+
+  /* Secondary — emerald for "go"/"friendly"/health */
+  --soj-emerald: #10b981;
+  --soj-emerald-bright: #34d399;
+
+  /* Danger — red for enemies/damage/low-health */
+  --soj-danger: #ef4444;
+  --soj-danger-bright: #f87171;
+
+  /* Text */
+  --soj-text: #e2e8f0;             /* slate-200 */
+  --soj-text-dim: #94a3b8;         /* slate-400 */
+  --soj-text-bright: #f8fafc;      /* slate-50 */
+
+  /* Fonts */
+  --soj-font-display: 'Black Ops One', 'Rajdhani', system-ui, sans-serif;
+  --soj-font-body: 'Rajdhani', system-ui, sans-serif;
+  --soj-font-mono: 'Share Tech Mono', ui-monospace, monospace;
+  --soj-font-retro: 'Press Start 2P', monospace;
+}
+
+/* Base body — apply the tactical font and deep background */
+body {
+  font-family: var(--soj-font-body);
+  background: var(--soj-bg-deep);
+  color: var(--soj-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+}
+
+/* Numeric / HUD readouts use mono for that tactical-display feel */
+.font-tactical {
+  font-family: var(--soj-font-mono);
+  letter-spacing: 0.02em;
+}
+
+.font-display {
+  font-family: var(--soj-font-display);
+  letter-spacing: 0.04em;
+}
+
+.font-retro {
+  font-family: var(--soj-font-retro);
+}
+
+/* ============================================================
+   Reusable panel style — semi-transparent with amber border accent
+   ============================================================ */
+.soj-panel {
+  background: rgba(17, 22, 31, 0.92);
+  border: 1px solid var(--soj-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.soj-panel-accent {
+  border-color: var(--soj-accent-dim);
+  box-shadow:
+    0 0 0 1px rgba(245, 158, 11, 0.15),
+    0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* Stencil-style heading underline — a thin amber bar under titles */
+.soj-heading {
+  font-family: var(--soj-font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  position: relative;
+  padding-bottom: 6px;
+}
+.soj-heading::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 36px;
+  height: 2px;
+  background: var(--soj-accent);
+}
+
+/* Tactical button — chunky, amber-accented, with hover glow */
+.soj-btn {
+  font-family: var(--soj-font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: linear-gradient(180deg, #1a212e 0%, #11161f 100%);
+  border: 1px solid var(--soj-border-bright);
+  color: var(--soj-text-bright);
+  padding: 0.75rem 1.5rem;
+  transition: all 0.15s ease;
+  position: relative;
+  overflow: hidden;
+}
+.soj-btn:hover {
+  border-color: var(--soj-accent);
+  color: var(--soj-accent-bright);
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.25), inset 0 0 12px rgba(245, 158, 11, 0.05);
+}
+.soj-btn:active {
+  transform: translateY(1px);
+}
+.soj-btn::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.1), transparent);
+  transition: left 0.4s ease;
+}
+.soj-btn:hover::before { left: 100%; }
+
+/* Primary CTA button — amber fill */
+.soj-btn-primary {
+  background: linear-gradient(180deg, var(--soj-accent-bright) 0%, var(--soj-accent) 100%);
+  border-color: var(--soj-accent-bright);
+  color: #0a0e14;
+  font-weight: 700;
+}
+.soj-btn-primary:hover {
+  background: linear-gradient(180deg, #fcd34d 0%, var(--soj-accent-bright) 100%);
+  color: #0a0e14;
+  box-shadow: 0 0 24px rgba(245, 158, 11, 0.4);
+}
+
+/* Corner-cut clip-path for that angular tactical look */
+.soj-clip {
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+}
+
+/* Scanline overlay — subtle CRT/tactical-display vibe for HUDs */
+.soj-scanlines {
+  position: relative;
+}
+.soj-scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 3px
+  );
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+/* ============================================================
+   Animations
+   ============================================================ */
+
 @keyframes slideIn {
-  from {
-    transform: translateX(-20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
+  from { transform: translateX(-20px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
 }
 
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes slideUpFade {
-  0% {
-    opacity: 0;
-    transform: translateY(20px) scale(0.9);
-  }
-  20% {
-    opacity: 1;
-    transform: translateY(0) scale(1.1);
-  }
-  30% {
-    transform: translateY(0) scale(1);
-  }
-  80% {
-    opacity: 1;
-    transform: translateY(-10px) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-30px) scale(0.9);
-  }
-}
-
-.animate-slide-up-fade {
-  animation: slideUpFade 2s ease-out forwards;
-}
-
-.animate-slide-in {
-  animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.4s ease-out forwards;
+  0%   { opacity: 0; transform: translateY(20px) scale(0.9); }
+  20%  { opacity: 1; transform: translateY(0) scale(1.1); }
+  30%  { transform: translateY(0) scale(1); }
+  80%  { opacity: 1; transform: translateY(-10px) scale(1); }
+  100% { opacity: 0; transform: translateY(-30px) scale(0.9); }
 }
 
 @keyframes shrinkX {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
-  }
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
 }
 
-.animate-shrink-x {
-  animation: shrinkX 3s linear forwards;
+/* New: pulsing glow for critical/low-health states */
+@keyframes soj-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px currentColor; }
+  50%      { opacity: 0.6; box-shadow: 0 0 16px currentColor; }
+}
+.soj-pulse { animation: soj-pulse 1.2s ease-in-out infinite; }
+
+/* New: sharp blink for hit markers / damage flashes */
+@keyframes soj-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.2; }
+}
+.soj-blink { animation: soj-blink 0.4s steps(2) infinite; }
+
+/* New: slide-down for dropdown menus / notifications */
+@keyframes soj-slideDown {
+  from { transform: translateY(-12px); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+.soj-slide-down { animation: soj-slideDown 0.2s ease-out forwards; }
+
+/* New: scale-in for modals */
+@keyframes soj-scaleIn {
+  from { transform: scale(0.92); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+.soj-scale-in { animation: soj-scaleIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* New: horizontal sweep — for loading bars / ability cooldown shimmer */
+@keyframes soj-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.soj-sweep { animation: soj-sweep 1.5s ease-in-out infinite; }
+
+.animate-slide-up-fade { animation: slideUpFade 2s ease-out forwards; }
+.animate-slide-in      { animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-fade-in       { animation: fadeIn 0.4s ease-out forwards; }
+.animate-shrink-x      { animation: shrinkX 3s linear forwards; }
+
+/* ============================================================
+   Scrollbar — slim, tactical
+   ============================================================ */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--soj-bg-deep); }
+::-webkit-scrollbar-thumb {
+  background: var(--soj-border-bright);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--soj-accent-dim); }
+
+/* Selection — amber highlight */
+::selection {
+  background: rgba(245, 158, 11, 0.3);
+  color: var(--soj-text-bright);
+}
+
+/* Disable text selection on game UI — feels more app-like */
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
 }

@@ -162,76 +162,118 @@ export function MainMenu({ onClassicMode, onCampaignMode, user }: MainMenuProps)
   const onLeave=()=>{setHoveredButton(null);hoverPlayedRef.current={};};
 
   const btnBase:React.CSSProperties={
-    fontFamily:'"Press Start 2P","Courier New",monospace',
-    fontSize:'clamp(0.9rem,1.8vw,1.2rem)',
-    padding:'16px 48px',border:'2px solid #4ade80',borderRadius:'4px',
-    color:'#4ade80',background:'rgba(34,197,94,0.08)',cursor:'pointer',
-    transition:'all 0.25s cubic-bezier(0.22,1,0.36,1)',outline:'none',
-    letterSpacing:'0.1em',position:'relative',overflow:'hidden',textTransform:'uppercase',
+    fontFamily:'var(--soj-font-display)',
+    fontSize:'clamp(0.95rem,1.6vw,1.15rem)',
+    padding:'18px 56px',border:'1px solid #3d4a5c',
+    color:'#e2e8f0',background:'linear-gradient(180deg,#1a212e 0%,#11161f 100%)',cursor:'pointer',
+    transition:'all 0.2s cubic-bezier(0.22,1,0.36,1)',outline:'none',
+    letterSpacing:'0.14em',position:'relative',overflow:'hidden',textTransform:'uppercase',
+    clipPath:'polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))',
   };
 
   const getStyle=(id:'classic'|'campaign'):React.CSSProperties=>{
     const h=hoveredButton===id;
+    const isPrimary = id === 'classic';
+    if (isPrimary) {
+      return{...btnBase,
+        transform:h?'scale(1.04)':'scale(1)',
+        borderColor:h?'#fbbf24':'#f59e0b',
+        color:'#0a0e14',
+        background:h?'linear-gradient(180deg,#fcd34d 0%,#fbbf24 100%)':'linear-gradient(180deg,#fbbf24 0%,#f59e0b 100%)',
+        boxShadow:h?'0 0 32px rgba(245,158,11,0.45),inset 0 0 16px rgba(255,255,255,0.1)':'0 0 12px rgba(245,158,11,0.15)',
+        textShadow:h?'0 1px 0 rgba(255,255,255,0.3)':'none',
+        fontWeight:700,
+      };
+    }
     return{...btnBase,
-      transform:h?'scale(1.12)':'scale(1)',
-      borderColor:h?'#86efac':'#4ade80',
-      color:h?'#bbf7d0':'#4ade80',
-      background:h?'linear-gradient(135deg,rgba(34,197,94,0.25),rgba(34,197,94,0.12))':'rgba(34,197,94,0.08)',
-      boxShadow:h?'0 0 30px rgba(74,222,128,0.3),inset 0 0 20px rgba(74,222,128,0.05)':'none',
-      textShadow:h?'0 0 12px rgba(74,222,128,0.6)':'none',
+      transform:h?'scale(1.04)':'scale(1)',
+      borderColor:h?'#f59e0b':'#3d4a5c',
+      color:h?'#fbbf24':'#e2e8f0',
+      background:h?'linear-gradient(180deg,#1a212e 0%,#11161f 100%)':'linear-gradient(180deg,#1a212e 0%,#11161f 100%)',
+      boxShadow:h?'0 0 24px rgba(245,158,11,0.25),inset 0 0 12px rgba(245,158,11,0.05)':'none',
+      textShadow:h?'0 0 10px rgba(245,158,11,0.5)':'none',
     };
   };
 
-  const particles = Array.from({length:50},(_,i)=>({
-    w:1+Math.random()*2, l:Math.random()*100, t:Math.random()*100,
-    h:140+Math.random()*40, s:80, li:40+Math.random()*30,
-    o:0.12+Math.random()*0.2,
-    dur:3+Math.random()*4, del:Math.random()*3,
+  // Atmospheric embers/dust motes — warmer palette to match the amber theme
+  const particles = Array.from({length:60},()=>({
+    w:1+Math.random()*2.5, l:Math.random()*100, t:Math.random()*100,
+    // Amber/orange/red ember tones
+    h:25+Math.random()*35, s:70+Math.random()*30, li:45+Math.random()*30,
+    o:0.10+Math.random()*0.22,
+    dur:4+Math.random()*5, del:Math.random()*4,
   }));
 
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center select-none cursor-default"
-      style={{background:'radial-gradient(ellipse at 50% 40%,#0a1628 0%,#020810 70%,#000000 100%)'}}>
+    <div className="absolute inset-0 flex flex-col items-center justify-center select-none cursor-default overflow-hidden"
+      style={{
+        background:
+          'radial-gradient(ellipse at 50% 35%, #1a1208 0%, #0a0e14 55%, #020408 100%)',
+      }}>
+      {/* Vignette + subtle grid overlay for tactical feel */}
+      <div className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage:
+            'linear-gradient(rgba(245,158,11,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(245,158,11,0.025) 1px, transparent 1px)',
+          backgroundSize: '48px 48px',
+          maskImage: 'radial-gradient(ellipse at 50% 50%, black 30%, transparent 80%)',
+          WebkitMaskImage: 'radial-gradient(ellipse at 50% 50%, black 30%, transparent 80%)',
+        }}/>
+      {/* Floating embers */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {particles.map((p,i)=>(
           <div key={i} className="absolute rounded-full" style={{
             width:`${p.w}px`,height:`${p.w}px`,left:`${p.l}%`,top:`${p.t}%`,
             background:`hsl(${p.h},${p.s}%,${p.li}%)`,opacity:p.o,
             animation:`mmFloat ${p.dur}s ease-in-out ${p.del}s infinite`,
+            boxShadow:`0 0 6px hsl(${p.h},${p.s}%,${p.li}%)`,
           }}/>
         ))}
       </div>
-      <div className="relative z-10 mb-20">
+      {/* Title block */}
+      <div className="relative z-10 mb-16 text-center">
+        <div className="text-amber-500/60 font-tactical text-xs tracking-[0.4em] mb-3 uppercase">
+          Tactical Combat FPS
+        </div>
         <h1 style={{
-          fontSize:'clamp(2rem,5.5vw,4.5rem)',
-          fontFamily:'"Press Start 2P","Courier New",monospace',
+          fontSize:'clamp(2.2rem,6vw,5rem)',
+          fontFamily:'var(--soj-font-display)',
           color:'transparent',
-          background:'linear-gradient(90deg,#00ff88,#00ccff,#cc44ff,#ffcc00,#00ff88)',
-          backgroundSize:'400% 100%',WebkitBackgroundClip:'text',backgroundClip:'text',
-          animation:'mmHue 6s linear infinite',
-          filter:'drop-shadow(0 0 25px rgba(0,255,136,0.35))',
-          letterSpacing:'0.08em',fontWeight:700,whiteSpace:'nowrap',
+          background:'linear-gradient(180deg, #fef3c7 0%, #fbbf24 45%, #d97706 100%)',
+          WebkitBackgroundClip:'text',backgroundClip:'text',
+          filter:'drop-shadow(0 4px 24px rgba(245,158,11,0.35)) drop-shadow(0 1px 0 rgba(0,0,0,0.5))',
+          letterSpacing:'0.06em',fontWeight:400,whiteSpace:'nowrap',
+          lineHeight:1,
         }}>SCREAM OF JUSTICE</h1>
-        {user?.username&&<p className="text-center mt-4" style={{
-          fontFamily:'"Courier New",monospace',color:'rgba(255,255,255,0.3)',
-          fontSize:'clamp(0.55rem,1.1vw,0.8rem)',letterSpacing:'0.3em',
-        }}>Welcome, {user.username}</p>}
+        {/* Amber accent bar under title */}
+        <div className="mx-auto mt-4" style={{
+          width: '120px', height: '2px',
+          background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)',
+        }}/>
+        {user?.username && (
+          <p className="text-center mt-5 font-tactical text-xs"
+            style={{color:'rgba(226,232,240,0.45)', letterSpacing:'0.3em'}}>
+            AUTHENTICATED · <span style={{color:'#fbbf24'}}>{user.username.toUpperCase()}</span>
+          </p>
+        )}
       </div>
-      <div className="relative z-10 flex flex-col gap-5">
+      {/* Buttons */}
+      <div className="relative z-10 flex flex-col gap-4 items-center">
         <button onClick={e=>{e.stopPropagation();onClassicMode()}}
           onMouseEnter={()=>onEnter('classic')} onMouseLeave={onLeave}
-          style={getStyle('classic')}>Classic</button>
+          style={getStyle('classic')}>Deploy · Classic</button>
         <button onClick={e=>{e.stopPropagation();onCampaignMode()}}
           onMouseEnter={()=>onEnter('campaign')} onMouseLeave={onLeave}
           style={getStyle('campaign')}>Campaign</button>
+        <div className="mt-6 font-tactical text-[10px] tracking-[0.3em] uppercase text-slate-600">
+          Click to begin · Audio enabled
+        </div>
       </div>
       <style>{`
-        @keyframes mmHue{0%{background-position:0% 50%}100%{background-position:400% 50%}}
         @keyframes mmFloat{0%,100%{transform:translateY(0) translateX(0);opacity:0.15}
-          25%{transform:translateY(-15px) translateX(5px);opacity:0.3}
-          50%{transform:translateY(-8px) translateX(-5px);opacity:0.2}
-          75%{transform:translateY(-20px) translateX(3px);opacity:0.25}}
-        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+          25%{transform:translateY(-18px) translateX(6px);opacity:0.35}
+          50%{transform:translateY(-10px) translateX(-6px);opacity:0.22}
+          75%{transform:translateY(-24px) translateX(4px);opacity:0.3}}
       `}</style>
     </div>
   );
