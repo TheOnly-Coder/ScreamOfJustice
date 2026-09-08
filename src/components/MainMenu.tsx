@@ -61,7 +61,7 @@ export function MainMenu({ onClassicMode, onCampaignMode, user }: MainMenuProps)
     ];
 
     // Rhythm - pulse on beats 1 and 3
-    const rhythm: [number,number][] = [[0],[2],[4],[6],[8],[10],[12],[14]];
+    const rhythm: [number][] = [[0],[2],[4],[6],[8],[10],[12],[14]];
 
     const loopLen = 16 * bd;
 

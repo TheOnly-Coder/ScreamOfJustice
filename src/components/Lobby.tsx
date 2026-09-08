@@ -346,9 +346,9 @@ export const Lobby: React.FC<LobbyProps> = ({
           </div>
           <div>
             <h1 className="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
-              POLY COMBAT <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-mono">3D FPS</span>
+              SCREAM OF JUSTICE <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-mono">3D FPS</span>
             </h1>
-            <p className="text-xs text-slate-400">Low-Poly optimized first person bot battle arena</p>
+            <p className="text-xs text-slate-400">Tactical low-poly first person combat — bots, squads &amp; campaign</p>
           </div>
         </div>
 

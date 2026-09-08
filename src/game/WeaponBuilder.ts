@@ -1,5 +1,13 @@
 import * as THREE from 'three';
 import { Weapon, CharacterClass } from '../types';
+import {
+  weaponKindFor,
+  isMeleeKind,
+  getWeaponModelClone,
+  buildWeaponModel,
+  getWeaponMuzzleZ,
+  WeaponModelKind,
+} from './WeaponModelLoader';
 
 const createMesh = (geo: THREE.BufferGeometry, mat: THREE.Material): THREE.Mesh => {
   const mesh = new THREE.Mesh(geo, mat);
@@ -8,6 +16,36 @@ const createMesh = (geo: THREE.BufferGeometry, mat: THREE.Material): THREE.Mesh 
   return mesh;
 };
 
+/** First-person viewmodel placement per weapon model kind. The normalized
+ *  GLB weapons have their grip at the origin and muzzle along -Z; these
+ *  transforms frame them correctly for the camera (which looks down -Z). */
+const FP_VIEWMODEL: Record<WeaponModelKind, { pos: [number, number, number]; rot: [number, number, number]; scale: number }> = {
+  rifle:    { pos: [0, -0.02, 0.14], rot: [0, 0, 0], scale: 1.0 },
+  smg:      { pos: [0, -0.03, 0.10], rot: [0, 0, 0], scale: 1.15 },
+  p90:      { pos: [0, -0.03, 0.10], rot: [0, 0, 0], scale: 1.15 },
+  sniper:   { pos: [0, -0.02, 0.20], rot: [0, 0, 0], scale: 0.95 },
+  shotgun:  { pos: [0, -0.02, 0.16], rot: [0, 0, 0], scale: 1.0 },
+  lmg:      { pos: [0, -0.02, 0.16], rot: [0, 0, 0], scale: 0.95 },
+  pistol:   { pos: [0.01, -0.05, 0.14], rot: [0, 0, 0], scale: 1.35 },
+  revolver: { pos: [0.01, -0.05, 0.14], rot: [0, 0, 0], scale: 1.35 },
+  launcher: { pos: [0, -0.04, 0.22], rot: [0, 0, 0], scale: 0.9 },
+  katana:   { pos: [0.06, -0.10, 0.08], rot: [0.15, -0.45, 0.35], scale: 1.05 },
+  knife:    { pos: [0.05, -0.08, 0.10], rot: [0.2, -0.5, 0.4], scale: 1.2 },
+  sword:    { pos: [0.06, -0.10, 0.08], rot: [0.15, -0.45, 0.35], scale: 1.05 },
+  axe:      { pos: [0.06, -0.10, 0.08], rot: [0.15, -0.45, 0.35], scale: 1.05 },
+};
+
+/**
+ * Build the first-person view weapon. Real GLB weapon models (Quaternius /
+ * Kenney, CC0) are used once loaded; until then a procedural stand-in keeps
+ * the view complete and is swapped out automatically.
+ *
+ * Kept contract with GameCanvas.tsx:
+ *   - game.weaponMesh  → group whose transform the sway/reload code drives
+ *   - game.slideMesh   → optional mesh kicked back on fire (pistol slides)
+ *   - game.slashMesh   → optional melee trail (none for GLB melee)
+ *   - child named 'muzzlePoint' → muzzle flash / tracer origin
+ */
 export const buildHighQualityFirstPersonWeapon = (
   game: any,
   weaponGroup: THREE.Group,
@@ -21,6 +59,76 @@ export const buildHighQualityFirstPersonWeapon = (
   game.slashMesh = null;
 
   const wep = game.activeWeapon as Weapon;
+  const kind = weaponKindFor(wep.id, wep.type as string, wep.name);
+
+  const attachGlb = (model: THREE.Group) => {
+    for (const child of [...weaponGroup.children]) weaponGroup.remove(child);
+    game.slideMesh = null;
+    game.slashMesh = null;
+
+    const mainBody = new THREE.Group();
+    mainBody.position.set(0.2, -0.25, -0.45); // default center-right
+    weaponGroup.add(mainBody);
+    game.weaponMesh = mainBody as any;
+
+    const muzzlePoint = new THREE.Object3D();
+    muzzlePoint.name = 'muzzlePoint';
+    mainBody.add(muzzlePoint);
+
+    const cfg = FP_VIEWMODEL[kind];
+    model.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
+    model.rotation.set(cfg.rot[0], cfg.rot[1], cfg.rot[2]);
+    model.scale.setScalar(cfg.scale);
+    // GLB models must not intercept the player's own aim raycasts.
+    model.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) {
+        m.raycast = () => {};
+        m.castShadow = false;
+        m.receiveShadow = false;
+      }
+    });
+    mainBody.add(model);
+
+    muzzlePoint.position.set(0, 0.035, getWeaponMuzzleZ(kind) * cfg.scale);
+
+    // Some source models expose a moving slide node — hook up kickback.
+    let slideNode: THREE.Mesh | null = null;
+    model.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!slideNode && m.isMesh && /^slide/i.test(o.name)) slideNode = m;
+    });
+    if (slideNode) game.slideMesh = slideNode;
+  };
+
+  const cached = getWeaponModelClone(kind);
+  if (cached) {
+    attachGlb(cached);
+  } else {
+    // Procedural stand-in until the GLB arrives (usually <300ms after boot).
+    buildProceduralFirstPersonWeapon(game, weaponGroup, wep, playerClass);
+    const sentinel = game.weaponMesh;
+    buildWeaponModel(kind).then(model => {
+      if (!model) return;
+      // Ignore the swap if the player switched weapons meanwhile (a switch
+      // rebuilds the viewmodel and replaces game.weaponMesh).
+      if (game.weaponMesh !== sentinel) return;
+      attachGlb(model);
+    });
+  }
+};
+
+/**
+ * Legacy procedural viewmodel — still used as the instant fallback while
+ * the GLB weapon library loads, and as a safety net if a model failed.
+ */
+export const buildProceduralFirstPersonWeapon = (
+  game: any,
+  weaponGroup: THREE.Group,
+  wep: Weapon,
+  playerClass: CharacterClass
+) => {
+  void playerClass;
   const wName = wep.name.toUpperCase();
   
   const baseMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(wep.color).multiplyScalar(0.7), roughness: 0.6, metalness: 0.5 });

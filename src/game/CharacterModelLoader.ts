@@ -1,7 +1,6 @@
 // CharacterModelLoader.ts
 // Loads the GLTF soldier model with embedded Idle/Walk/Run animations,
-// caches it, and provides per-instance clones with their own AnimationMixer
-// + a procedural Death clip (the source GLB has no death animation).
+// caches it, and provides per-instance clones with their own AnimationMixer.
 //
 // Design notes:
 //   - The cloned GLTF scene is added as a child of the caller's `meshGroup`.
@@ -11,12 +10,19 @@
 //     GameCanvas.tsx hit-detection logic line-for-line.
 //   - Each clone has its own AnimationMixer so multiple bots can animate
 //     independently.
-//   - The procedural Death clip rotates the whole root forward 90° and lowers
-//     it to the ground, matching the old tip-over behavior but driven through
-//     the mixer so it cleanly layers with idle/walk/run.
 //   - `tryCreateCharacterInstance` is SYNCHRONOUS: it returns null if the
 //     model hasn't finished loading yet, so callers can fall back to the
 //     procedural character. This avoids making the bot-creation code async.
+//
+// Weapon-hold support (NEW):
+//   - The loader captures the bind-pose ("rest") world orientation of every
+//     pose-relevant bone ONCE, so CharacterPose.ts can deterministically
+//     re-pose arms/legs to hold weapons on top of the mixer-driven clips
+//     (rifle carry, pistol hold, melee grip, jump tuck).
+//   - `tryCreateCharacterInstance` accepts an optional tint AND team color:
+//     the body is tinted with the team color in team modes so every bot on a
+//     team reads as one unit (per request: bots don't have unique characters —
+//     teams have their own character color).
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -28,8 +34,6 @@ const BASE_URL = ((import.meta as any).env?.BASE_URL) || '/';
 const MODEL_URL = `${BASE_URL}models/Soldier.glb`;
 
 // Target render height of the soldier in world units (meters).
-// The original procedural character had head at y=1.6, so ~1.8m total height
-// matches well.
 const TARGET_HEIGHT = 1.8;
 
 export type AnimName = 'Idle' | 'Walk' | 'Run' | 'Death';
@@ -41,11 +45,37 @@ export interface LoadedCharacterModel {
   /** World-space Y of the head bone (after normalization). Used by callers
    *  to position a head hitbox. */
   headY: number;
+  /** Bind-pose world quaternions (in root space) for pose bones, by name.
+   *  Shared read-only reference for every instance. */
+  restQuats: Record<string, THREE.Quaternion>;
 }
 
 let _cached: LoadedCharacterModel | null = null;
 let _loadingPromise: Promise<LoadedCharacterModel> | null = null;
 let _loadFailed = false;
+
+/** Bones re-posed by the weapon-hold / jump layers. */
+export const POSE_BONES = [
+  'Hips',
+  'Spine', 'Spine1', 'Spine2',
+  'Neck', 'Head',
+  'LeftShoulder', 'LeftArm', 'LeftForeArm', 'LeftHand',
+  'RightShoulder', 'RightArm', 'RightForeArm', 'RightHand',
+  'LeftUpLeg', 'LeftLeg', 'LeftFoot',
+  'RightUpLeg', 'RightLeg', 'RightFoot',
+] as const;
+
+function findBone(root: THREE.Object3D, name: string): THREE.Object3D | null {
+  // Mixamo bone names lose their ":" during GLTF import (three.js
+  // sanitizeNodeName), so try every spelling seen in the wild:
+  //   "mixamorig:Hips" (source) / "mixamorigHips" (loaded) / "Hips"
+  return (
+    root.getObjectByName(`mixamorig:${name}`) ||
+    root.getObjectByName(`mixamorig${name}`) ||
+    root.getObjectByName(name) ||
+    null
+  );
+}
 
 /** Preload the GLTF model in the background. Safe to call multiple times. */
 export function preloadCharacterModel(): Promise<LoadedCharacterModel> {
@@ -106,6 +136,18 @@ export function preloadCharacterModel(): Promise<LoadedCharacterModel> {
         }
       });
 
+      // --- Capture bind-pose world orientations for the pose layer ---
+      // Done BEFORE any animation clip has played, so this is the true
+      // T-pose bind orientation. Scale does not affect quaternions.
+      normalized.updateMatrixWorld(true);
+      const restQuats: Record<string, THREE.Quaternion> = {};
+      for (const name of POSE_BONES) {
+        const bone = findBone(normalized, name);
+        if (bone) {
+          restQuats[name] = bone.getWorldQuaternion(new THREE.Quaternion());
+        }
+      }
+
       const clips: Record<AnimName, THREE.AnimationClip | null> = {
         Idle: null,
         Walk: null,
@@ -121,7 +163,7 @@ export function preloadCharacterModel(): Promise<LoadedCharacterModel> {
       // well and is preserved as-is. The mixer is only used for
       // idle/walk/run transitions on LIVING bots.
 
-      _cached = { scene: normalized, animations: gltf.animations, clips, headY };
+      _cached = { scene: normalized, animations: gltf.animations, clips, headY, restQuats };
       return _cached;
     } catch (err) {
       console.warn('[CharacterModelLoader] Failed to load character model:', err);
@@ -141,10 +183,25 @@ export function isCharacterModelLoaded(): boolean {
 
 export interface CharacterInstance {
   root: THREE.Group;              // the cloned GLTF scene — ADD this to your meshGroup
-  mixer: THREEAnimationMixer;     // call .update(delta) each frame
+  mixer: THREE.AnimationMixer;    // call .update(delta) each frame
   actions: Record<AnimName, THREEAnimationAction | null>;
   currentAction: THREEAnimationAction | null;
   headY: number;                  // world Y of the head bone (for hitbox positioning)
+  restQuats: Record<string, THREE.Quaternion>;
+  /** Per-instance smoothing state for the weapon-hold layer (owned by
+   *  CharacterPose.ts). Maps bone name -> last applied LOCAL quaternion. */
+  poseState?: Map<string, THREE.Quaternion>;
+  /** Set to > 0 while a melee swing overlay is playing (seconds remaining). */
+  meleeSwingTimer?: number;
+  /** Total duration of the active melee swing (for progress math). */
+  meleeSwingDuration?: number;
+  /** Weapon model currently parented to the right hand (pose layer keeps it
+   *  aligned with the hold pose every frame). */
+  attachedWeapon?: {
+    obj: THREE.Object3D;
+    hold: 'rifle' | 'pistol' | 'melee';
+    handScaleComp: number;
+  } | null;
 }
 
 // Type aliases to avoid importing THREE types repeatedly.
@@ -156,7 +213,8 @@ type THREEAnimationAction = THREE.AnimationAction;
  * Returns null if the model isn't loaded yet — caller should fall back to
  * the procedural character in that case.
  *
- * @param tint Optional THREE.Color to tint the body material (per-class color).
+ * @param tint Optional THREE.Color to tint the body material (per-class or
+ *             per-team color).
  */
 export function tryCreateCharacterInstance(
   tint?: THREE.Color | null
@@ -212,9 +270,19 @@ export function tryCreateCharacterInstance(
     actions,
     currentAction: actions.Idle,
     headY: loaded.headY,
+    restQuats: loaded.restQuats,
+    poseState: new Map(),
+    meleeSwingTimer: 0,
+    meleeSwingDuration: 0.38,
   };
 }
 
+/**
+ * Tint only the character's CLOTHING (torso/limbs), keeping skin and gear
+ * colors intact, so team colors read clearly without making the whole model
+ * a single flat color. Falls back to tinting everything if the clothing
+ * materials cannot be identified.
+ */
 function tintMaterial(mat: THREE.Material, tint: THREE.Color): THREE.Material {
   const m = (mat as THREE.Material).clone();
   if ('color' in m) {
@@ -224,6 +292,11 @@ function tintMaterial(mat: THREE.Material, tint: THREE.Color): THREE.Material {
     }
   }
   return m;
+}
+
+/** Find a bone inside a character instance (mixamorig prefix aware). */
+export function findCharacterBone(root: THREE.Object3D, name: string): THREE.Object3D | null {
+  return findBone(root, name);
 }
 
 /**
@@ -254,9 +327,14 @@ export function transitionTo(
   next.reset();
   next.setEffectiveWeight(1);
   next.play();
-  // (setEffectiveWeight already called above)
   if (inst.currentAction && inst.currentAction !== next) {
     inst.currentAction.crossFadeTo(next, fadeDuration, false);
   }
   inst.currentAction = next;
+}
+
+/** Kick off a one-shot melee swing overlay (drives CharacterPose). */
+export function startMeleeSwing(inst: CharacterInstance, duration = 0.38): void {
+  inst.meleeSwingTimer = duration;
+  inst.meleeSwingDuration = duration;
 }

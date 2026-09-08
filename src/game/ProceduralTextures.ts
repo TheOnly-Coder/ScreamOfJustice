@@ -280,9 +280,9 @@ export function createContainerFaceMaterials(
   const baseOpts = {
     roughness: 0.7,
     metalness: 0.35,
-    flatShading: false as const,
-    side: THREE.DoubleSide as const,
-  };
+    flatShading: false,
+    side: THREE.DoubleSide,
+  } as const;
 
   const makeFaceMat = (faceW: number, faceH: number) => {
     const tex = createBrickTexture(color, 0x4b5563, 48, 24, 3);

@@ -20,6 +20,7 @@ import {
 import { buildMap, CollidableBox } from '../game/MapBuilder';
 import { sounds } from '../lib/sounds';
 import { buildHighQualityFirstPersonWeapon, buildThirdPersonWeapon } from '../game/WeaponBuilder';
+import { preloadWeaponModels, weaponKindFor, isMeleeKind, buildWeaponModel, getWeaponModelClone, WeaponModelKind } from '../game/WeaponModelLoader';
 import {
   preloadCharacterModel,
   tryCreateCharacterInstance,
@@ -28,6 +29,7 @@ import {
   CharacterInstance,
   AnimName,
 } from '../game/CharacterModelLoader';
+import { applyHoldPose, attachWeaponToHand, detachWeapon, HoldKind } from '../game/CharacterPose';
 
 interface GameCanvasProps {
   graphicsQuality: GraphicsQuality;
@@ -170,6 +172,10 @@ export interface BotEntity {
   /** Tracks the last animation state we transitioned to, so we don't spam
    *  transitionTo() every frame. */
   lastAnimState?: AnimName | null;
+  /** Weapon-hold style for the pose layer (rifle / pistol / melee). */
+  holdKind?: HoldKind;
+  /** Weapon model kind for the currently equipped weapon. */
+  weaponModelKind?: WeaponModelKind;
   espBox?: THREE.LineSegments;
   tracerLine?: THREE.Line;
   healthBarGroup?: THREE.Group;
@@ -284,41 +290,59 @@ function tryBuildGLTFCharacter(
 }
 
 /**
- * Attach a third-person weapon mesh to a GLTF character. Tries to parent
- * the weapon to the right-hand bone for proper animation follow-through;
- * falls back to a fixed offset on meshGroup if the bone isn't found.
+ * Equip a character with the real 3D weapon model for the given weapon.
  *
- * All weapon sub-meshes have `raycast = () => {}` overridden so bullets
- * pass through the gun instead of being blocked by it (improvement over
- * the original procedural behavior).
+ * The normalized GLB weapon is parented to the character's right hand and
+ * aligned with the weapon-hold pose every frame by CharacterPose. If the
+ * model library hasn't loaded yet a small procedural stand-in is attached
+ * and swapped out automatically once the real model arrives.
  */
-function attachWeaponToGLTFCharacter(
-  meshGroup: THREE.Group,
+function equipCharacterWeapon(
   characterInstance: CharacterInstance,
-  weapon: THREE.Group | THREE.Mesh
+  weapon: { id?: string; name?: string; type?: string } | string
 ): void {
-  const rightHand = characterInstance.root.getObjectByName('mixamorig:RightHand') ||
-                    characterInstance.root.getObjectByName('RightHand');
-  // Disable raycast on every weapon sub-mesh so bullets pass through.
-  weapon.traverse(child => {
-    if ((child as THREE.Mesh).isMesh) {
-      (child as THREE.Mesh).raycast = () => {};
-    }
-  });
-  if (rightHand) {
-    rightHand.add(weapon);
-    // The GLTF model is in meters; the weapon was sized for the procedural
-    // character (also ~meter scale). Adjust the offset so the gun sits in
-    // the right hand. These values are tuned for the Mixamo right-hand bone
-    // orientation.
-    weapon.position.set(0, -0.05, 0.15);
-    weapon.rotation.set(0, Math.PI, 0);
-    weapon.scale.setScalar(0.9);
-  } else {
-    // Fallback: fixed offset on meshGroup (matches old procedural behavior)
-    weapon.position.set(0.38, 1.05, 0.35);
-    meshGroup.add(weapon);
+  const wid = typeof weapon === 'string' ? weapon : (weapon.id || '');
+  const wName = typeof weapon === 'string' ? weapon : (weapon.name || wid);
+  const wType = typeof weapon === 'string' ? '' : weapon.type;
+  const kind = weaponKindFor(wid, wType, wName);
+  const hold: HoldKind = isMeleeKind(kind)
+    ? 'melee'
+    : (kind === 'pistol' || kind === 'revolver') ? 'pistol' : 'rifle';
+
+  detachWeapon(characterInstance);
+
+  const ready = getWeaponModelClone(kind);
+  if (ready) {
+    attachWeaponToHand(characterInstance, ready, hold);
+    return;
   }
+
+  // Temporary stand-in so the character is never empty-handed.
+  const isMelee = isMeleeKind(kind);
+  const temp = new THREE.Mesh(
+    isMelee ? new THREE.BoxGeometry(0.03, 0.5, 0.03) : new THREE.BoxGeometry(0.05, 0.07, 0.5),
+    new THREE.MeshStandardMaterial({ color: 0x262b31, roughness: 0.5, metalness: 0.6 })
+  );
+  temp.raycast = () => {};
+  attachWeaponToHand(characterInstance, temp as any, hold);
+
+  buildWeaponModel(kind).then(model => {
+    if (!model) return;
+    // Only swap if the stand-in is still the equipped weapon.
+    if (characterInstance.attachedWeapon?.obj !== temp) return;
+    detachWeapon(characterInstance);
+    attachWeaponToHand(characterInstance, model, hold);
+  });
+}
+
+/** Map a weapon to its hold style (used by the per-frame pose layer). */
+function holdKindFor(weapon: { id?: string; name?: string; type?: string } | string): HoldKind {
+  const wid = typeof weapon === 'string' ? weapon : (weapon.id || '');
+  const wName = typeof weapon === 'string' ? weapon : (weapon.name || wid);
+  const wType = typeof weapon === 'string' ? '' : weapon.type;
+  const kind = weaponKindFor(wid, wType, wName);
+  return isMeleeKind(kind) ? 'melee'
+    : (kind === 'pistol' || kind === 'revolver') ? 'pistol' : 'rifle';
 }
 
 export const createBot = (
@@ -361,8 +385,8 @@ export const createBot = (
     rightArm = gltfBuild.rightArm;
     botHeadBox = gltfBuild.headMesh;
 
-    botGun = buildThirdPersonWeapon(botClass.primaryWeapon.id);
-    attachWeaponToGLTFCharacter(meshGroup, characterInstance, botGun);
+    equipCharacterWeapon(characterInstance, botClass.primaryWeapon);
+    botGun = new THREE.Group(); // placeholder ref (weapon rides the hand bone)
   } else {
     // --- Procedural low-poly character (fallback) ---
     // LOW-POLY ORGANIC CHARACTER MODEL
@@ -836,6 +860,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     c2DialogueQueue: { speaker: string; text: string }[];
     c2GateTriggered: boolean;
     c2BriggsGroup: THREE.Group | null; // Briggs 3D model
+    c2NpcMixers?: CharacterInstance[] | null; // friendly NPC animation instances
     c2BriggsPos: THREE.Vector3; // Briggs world position
     c2PrivateHaleGroup: THREE.Group | null;
     c2PrivateMercerGroup: THREE.Group | null;
@@ -973,6 +998,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     c2DialogueQueue: [],
     c2GateTriggered: false,
     c2BriggsGroup: null,
+    c2NpcMixers: null,
     c2BriggsPos: new THREE.Vector3(0, 0, 0),
     c2PrivateHaleGroup: null,
     c2PrivateMercerGroup: null,
@@ -1068,19 +1094,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     console.log('[GAME] init — isCampaign:', config.isCampaign, 'mapId:', config.mapId, 'scoreLimit:', config.scoreLimit, 'botCount:', config.botCount);
     const game = gameRef.current;
 
-    // Kick off async preload of the GLTF character model. The model loads
-    // in the background; bots created before it finishes use the procedural
-    // fallback, and bots created after use the real GLTF soldier with
-    // skeletal animations. Subsequent matches reuse the cached model.
-    preloadCharacterModel().catch(err => {
-      console.warn('[GAME] Character model preload failed; will use procedural fallback.', err);
-    });
+    // The game boot is gated on the model library: character GLB + weapon
+    // GLBs are awaited BEFORE anything spawns, so every character in every
+    // mode uses the real online models (no box-creature fallbacks mid-match).
+    let disposed = false;
+    let cleanup: () => void = () => {};
+
+    (async () => {
+      await Promise.all([
+        preloadCharacterModel().catch(err => {
+          console.warn('[GAME] Character model preload failed; will use procedural fallback.', err);
+        }),
+        preloadWeaponModels().catch(err => {
+          console.warn('[GAME] Weapon model preload failed; procedural weapons will be used.', err);
+        }),
+      ]);
+      if (disposed) return;
 
     // Build high-detail low-poly tactical soldier mesh visual representation of other real players
-    const buildOtherPlayerMesh = (classId: string, name: string, activeWeaponId?: string) => {
+    const buildOtherPlayerMesh = (classId: string, name: string, activeWeaponId?: string, tintOverride?: string | null) => {
       const meshGroup = new THREE.Group();
       const charClass = CLASSES.find(c => c.id === classId) || CLASSES[0];
       const initialWepId = activeWeaponId || charClass.primaryWeapon?.id || 'm4_assault';
+      // Team modes color every character by TEAM color, not class.
+      const tintHex = tintOverride || charClass.color;
 
       let characterInstance: CharacterInstance | null = null;
       let upperBodyGroup: THREE.Group;
@@ -1089,7 +1126,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       let weaponMesh: THREE.Group | THREE.Mesh;
 
       // Try GLTF character model first; fall back to procedural if not loaded.
-      const gltfBuild = tryBuildGLTFCharacter(meshGroup, new THREE.Color(charClass.color));
+      const gltfBuild = tryBuildGLTFCharacter(meshGroup, new THREE.Color(tintHex));
       if (gltfBuild) {
         characterInstance = gltfBuild.characterInstance;
         headMesh = gltfBuild.headMesh;
@@ -1103,8 +1140,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         upperBodyGroup.position.set(0, 1.15, 0);
         meshGroup.add(upperBodyGroup);
 
-        weaponMesh = buildThirdPersonWeapon(initialWepId);
-        attachWeaponToGLTFCharacter(meshGroup, characterInstance, weaponMesh);
+        equipCharacterWeapon(characterInstance, initialWepId);
+        weaponMesh = new THREE.Group(); // weapon rides the hand bone
       } else {
         // --- Procedural low-poly character (fallback) ---
         // 1. Combat Boots (Feet at y = 0.1)
@@ -1361,7 +1398,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               }
               let pObj = game.otherPlayers.get(pData.id);
               if (!pObj) {
-                const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId, pData.name, pData.activeWeaponId);
+                const remoteTint = (teamMode && typeof pData.teamId === 'number' && pData.teamId >= 0) ? TEAM_COLORS[pData.teamId] : null;
+                const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId, pData.name, pData.activeWeaponId, remoteTint);
                 meshGroup.position.set(pData.x, Math.max(0, pData.y - 1.5), pData.z);
                 meshGroup.rotation.y = (pData.yaw || 0) + Math.PI;
                 if (upperBodyGroup) upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0)));
@@ -1433,7 +1471,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
             let pObj = game.otherPlayers.get(pData.id);
             if (!pObj) {
-              const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId, pData.name, pData.activeWeaponId);
+              const remoteTint = (teamMode && typeof pData.teamId === 'number' && pData.teamId >= 0) ? TEAM_COLORS[pData.teamId] : null;
+                const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId, pData.name, pData.activeWeaponId, remoteTint);
               meshGroup.position.set(pData.x, Math.max(0, pData.y - 1.5), pData.z);
               meshGroup.rotation.y = (pData.yaw || 0) + Math.PI;
               if (upperBodyGroup) upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0)));
@@ -1449,6 +1488,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 headMesh,
                 torsoMesh,
                 characterInstance,
+                holdKind: holdKindFor(activeWeaponId),
                 lastAnimState: null as AnimName | null,
                 position: new THREE.Vector3(pData.x, pData.y, pData.z),
                 yaw: pData.yaw || 0,
@@ -1496,22 +1536,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
               // Update equipped weapon model if changed
               if (pData.activeWeaponId && pData.activeWeaponId !== pObj.activeWeaponId) {
-                if (pObj.weaponMesh && pObj.upperBodyGroup) {
-                  pObj.upperBodyGroup.remove(pObj.weaponMesh);
+                if (pObj.characterInstance) {
+                  equipCharacterWeapon(pObj.characterInstance, pData.activeWeaponId);
                 }
-                const newWep = buildThirdPersonWeapon(pData.activeWeaponId);
-                newWep.position.set(0.38, -0.1, 0.35);
-                if (pObj.upperBodyGroup) {
-                  pObj.upperBodyGroup.add(newWep);
-                }
-                pObj.weaponMesh = newWep;
                 pObj.activeWeaponId = pData.activeWeaponId;
               }
 
               pObj.meshGroup.visible = pObj.health > 0 && !pObj.isSpectator;
             } else {
               // If we received an update for an un-tracked player, create them
-              const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId || 'assault', pData.name || 'Soldier', pData.activeWeaponId);
+              const remoteTint = (teamMode && typeof pData.teamId === 'number' && pData.teamId >= 0) ? TEAM_COLORS[pData.teamId] : null;
+              const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId || 'assault', pData.name || 'Soldier', pData.activeWeaponId, remoteTint);
               meshGroup.position.set(pData.x, Math.max(0, (pData.y || 1.5) - 1.5), pData.z);
               meshGroup.rotation.y = (pData.yaw || 0) + Math.PI;
               if (upperBodyGroup) upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0)));
@@ -1527,6 +1562,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 headMesh,
                 torsoMesh,
                 characterInstance,
+                holdKind: holdKindFor(activeWeaponId),
                 lastAnimState: null as AnimName | null,
                 position: new THREE.Vector3(pData.x, pData.y, pData.z),
                 yaw: pData.yaw || 0,
@@ -1991,30 +2027,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       game.weaponGroup = weaponGroup;
       buildFirstPersonWeapon();
 
-      // === CREATE SERGEANT BRIGGS (ally NPC) ===
-      const briggsMat = new THREE.MeshStandardMaterial({ color: 0x2d4a2d, roughness: 0.8, flatShading: true });
-      const briggsAccent = new THREE.MeshStandardMaterial({ color: 0x4a7a4a, roughness: 0.7, flatShading: true });
+      // === CREATE SERGEANT BRIGGS (ally NPC — real GLTF soldier) ===
       const briggs = new THREE.Group();
-      // Body
-      const bTorso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.35), briggsMat);
-      bTorso.position.y = 1.1; bTorso.castShadow = true; briggs.add(bTorso);
-      // Head
-      const bHead = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true }));
-      bHead.position.y = 1.7; bHead.castShadow = true; briggs.add(bHead);
-      // Beret
-      const bBeret = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.4), new THREE.MeshStandardMaterial({ color: 0x1a3a1a, roughness: 0.6, flatShading: true }));
-      bBeret.position.set(0.02, 1.9, -0.02); briggs.add(bBeret);
-      // Legs
-      const bLegGeo = new THREE.BoxGeometry(0.22, 0.7, 0.25);
-      const bLeftLeg = new THREE.Mesh(bLegGeo, briggsMat); bLeftLeg.position.set(-0.15, 0.35, 0); briggs.add(bLeftLeg);
-      const bRightLeg = new THREE.Mesh(bLegGeo, briggsMat); bRightLeg.position.set(0.15, 0.35, 0); briggs.add(bRightLeg);
-      // Arms
-      const bArmGeo = new THREE.BoxGeometry(0.18, 0.65, 0.2);
-      const bLeftArm = new THREE.Mesh(bArmGeo, briggsMat); bLeftArm.position.set(-0.45, 1.05, 0); briggs.add(bLeftArm);
-      const bRightArm = new THREE.Mesh(bArmGeo, briggsMat); bRightArm.position.set(0.45, 1.05, 0); briggs.add(bRightArm);
-      // Gun
-      const bGun = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.5), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.6, roughness: 0.4 }));
-      bGun.position.set(0.45, 1.0, -0.3); briggs.add(bGun);
+      {
+        const bGltf = tryBuildGLTFCharacter(briggs, new THREE.Color(0x2d4a2d));
+        if (bGltf) {
+          equipCharacterWeapon(bGltf.characterInstance, 'm4_assault');
+          // Briggs idles with his rifle (no AI loop drives a mixer for him —
+          // tick it inside the campaign2 block each frame via c2NpcMixers).
+          game.c2NpcMixers = game.c2NpcMixers || [];
+          game.c2NpcMixers.push(bGltf.characterInstance);
+        }
+      }
       // Name tag sprite
       const bLabelCanvas = document.createElement('canvas');
       bLabelCanvas.width = 256; bLabelCanvas.height = 48;
@@ -2057,8 +2081,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           eTorso = pGltfBuild.torsoMesh;
           eLL = pGltfBuild.leftLeg;
           eRL = pGltfBuild.rightLeg;
-          eGun = buildThirdPersonWeapon('m4_assault');
-          attachWeaponToGLTFCharacter(patrolMesh, patrolCharacterInstance, eGun);
+          eGun = new THREE.Group();
+          equipCharacterWeapon(patrolCharacterInstance, 'm4_assault');
         } else {
           const eMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
           const eHeadMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
@@ -2089,6 +2113,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           walkAnimPhase: 0,
           flinchTimer: 0,
           characterInstance: patrolCharacterInstance, useGLTFModel: !!patrolCharacterInstance, lastAnimState: null,
+          holdKind: 'rifle',
           classConfig: CLASSES[0], activeWeapon: CLASSES[0].primaryWeapon, // assault class stats
           isPrimary: true, isDead: false, respawnTimer: 0,
           kills: 0, deaths: 0, score: 0,
@@ -2110,19 +2135,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         game.c2PatrolBots.push(patrolBot);
       }
 
-      // === SPAWN PRIVATE HALE & MERCER AT GATE ===
+      // === SPAWN PRIVATE HALE & MERCER AT GATE (real GLTF soldiers) ===
       const makePrivate = (name: string, x: number) => {
         const pMesh = new THREE.Group();
-        const pMat = new THREE.MeshStandardMaterial({ color: 0x2d4a2d, roughness: 0.8, flatShading: true });
-        const pHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
-        const pTorso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.75, 0.3), pMat); pTorso.position.y = 1.05; pTorso.castShadow = true; pMesh.add(pTorso);
-        const pHead = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), pHMat); pHead.position.y = 1.65; pMesh.add(pHead);
-        // Helmet
-        const pHelm = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.15, 0.38), new THREE.MeshStandardMaterial({ color: 0x3a5a3a, roughness: 0.6 }));
-        pHelm.position.y = 1.85; pMesh.add(pHelm);
-        const pLegGeo = new THREE.BoxGeometry(0.2, 0.65, 0.22);
-        const pLL = new THREE.Mesh(pLegGeo, pMat); pLL.position.set(-0.13, 0.33, 0); pMesh.add(pLL);
-        const pRL = new THREE.Mesh(pLegGeo, pMat); pRL.position.set(0.13, 0.33, 0); pMesh.add(pRL);
+        const pGltf = tryBuildGLTFCharacter(pMesh, new THREE.Color(0x2d4a2d));
+        if (pGltf) {
+          equipCharacterWeapon(pGltf.characterInstance, 'm4_assault');
+          game.c2NpcMixers = game.c2NpcMixers || [];
+          game.c2NpcMixers.push(pGltf.characterInstance);
+        }
         // Name tag
         const pLC = document.createElement('canvas'); pLC.width = 256; pLC.height = 48;
         const pCtx = pLC.getContext('2d')!;
@@ -2174,7 +2195,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (child instanceof THREE.Group && !game.c3TruckRef) {
           // The truck is the main group added in MapBuilder
           child.traverse((c) => {
-            if ((c as THREE.Mesh).geometry?.parameters?.width === 3 && (c as THREE.Mesh).geometry?.parameters?.height === 2.5) {
+            const geomParams = ((c as THREE.Mesh).geometry as any)?.parameters; 
+            if (geomParams?.width === 3 && geomParams?.height === 2.5) {
               // Found the cab mesh, parent is the truck group
               game.c3TruckRef = child.parent instanceof THREE.Group ? child.parent : child;
             }
@@ -2209,6 +2231,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     buildFirstPersonWeapon();
     }
 
+    // Dev-only scene inspector (tree-shaken from production builds).
+    if ((import.meta as any).env?.DEV) {
+      (window as any).__sojGame = game;
+      (window as any).__sojScene = scene;
+    }
+
     // Setup muzzle flash visuals
     const flashGeo = new THREE.SphereGeometry(0.08, 4, 4);
     const flashMat = new THREE.MeshBasicMaterial({ color: 0xffea00, transparent: true, opacity: 0 });
@@ -2223,16 +2251,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // 4. Spawn Bot Entities in Scene
     const bots: BotEntity[] = [];
 
+    // Team modes are resolved up-front so characters can be TINTED with their
+    // team color at creation (bots don't have unique characters — teams do).
+    const teamMode = isTeamMode(config.gameMode);
+    const teamCfg = teamMode ? getTeamConfig(config.gameMode!) : null;
+    const teamForBotIndex = (i: number): number => {
+      if (!teamMode || !teamCfg) return -1;
+      // Player takes 1 slot on team 0; bots fill the remaining slots.
+      if (i < (teamCfg.perTeam - 1)) return 0;
+      const remainingBots = teamCfg.totalBots - (teamCfg.perTeam - 1);
+      const botsPerOtherTeam = teamCfg.perTeam;
+      const otherTeamIndex = Math.floor((i - (teamCfg.perTeam - 1)) / botsPerOtherTeam);
+      return Math.min(otherTeamIndex + 1, teamCfg.teamCount - 1);
+    };
+
     const spawnBot = (index: number): BotEntity => {
       const botName = BOT_NAMES[index % BOT_NAMES.length];
       const botClass = CLASSES[Math.floor(Math.random() * CLASSES.length)];
       const occupiedPositions = [game.playerPos, ...bots.map(b => b.position)];
       const botSpawn = getSafeSpawnPoint(game.spawnPoints, game.colliders, occupiedPositions);
+      const botTeamId = teamForBotIndex(index);
+      // TEAM COLOR as the character color in team modes; class color in FFA.
+      const tintHex = (teamMode && botTeamId >= 0)
+        ? (TEAM_COLORS[botTeamId] || TEAM_COLORS[0])
+        : botClass.color;
 
       const meshGroup = new THREE.Group();
 
       // Try GLTF character model first; fall back to procedural if not loaded.
-      const gltfBuild = tryBuildGLTFCharacter(meshGroup, new THREE.Color(botClass.color));
+      const gltfBuild = tryBuildGLTFCharacter(meshGroup, new THREE.Color(tintHex));
 
       let characterInstance: CharacterInstance | null = null;
       let torsoMesh: THREE.Mesh;
@@ -2252,8 +2299,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         rightArm = gltfBuild.rightArm;
         botHeadBox = gltfBuild.headMesh;
 
-        botGun = buildThirdPersonWeapon(botClass.primaryWeapon.id);
-        attachWeaponToGLTFCharacter(meshGroup, characterInstance, botGun);
+        equipCharacterWeapon(characterInstance, botClass.primaryWeapon);
+        botGun = new THREE.Group(); // weapon rides the hand bone
       } else {
         // --- Procedural low-poly character (fallback) ---
         // 1. Legs: hexagonal cylinders (pivotable around hip height y = 0.6)
@@ -2445,6 +2492,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         characterInstance,
         useGLTFModel: !!characterInstance,
         lastAnimState: null,
+        holdKind: holdKindFor(botClass.primaryWeapon),
+        teamId: botTeamId >= 0 ? botTeamId : undefined,
         position: botSpawn.clone(),
         velocity: new THREE.Vector3(),
         rotationY: Math.random() * Math.PI * 2,
@@ -2459,42 +2508,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       };
     };
 
-    // Choose bot classes randomly and model styles
-    const teamMode = isTeamMode(config.gameMode);
-    const teamCfg = teamMode ? getTeamConfig(config.gameMode!) : null;
-
     // Tutorial & Campaign 2: skip regular bot spawning (handled by mission logic)
     if (!(config.isCampaign && (config.mapId === 'tutorial' || config.mapId === 'campaign2'))) {
     for (let i = 0; i < (teamMode ? teamCfg!.totalBots : config.botCount); i++) {
       const bot = spawnBot(i);
-
-      // Assign teams in team mode
-      if (teamMode && teamCfg) {
-        // Player is on team 0, distribute bots across remaining team slots
-        // Team assignment: player takes 1 slot on team 0, bots fill the rest
-        let botTeamAssignment: number;
-        if (i < (teamCfg.perTeam - 1)) {
-          // First (perTeam - 1) bots go to player's team (team 0)
-          botTeamAssignment = 0;
-        } else {
-          // Remaining bots distributed evenly across other teams
-          const remainingBots = teamCfg.totalBots - (teamCfg.perTeam - 1);
-          const botsPerOtherTeam = teamCfg.perTeam;
-          const otherTeamIndex = Math.floor((i - (teamCfg.perTeam - 1)) / botsPerOtherTeam);
-          botTeamAssignment = Math.min(otherTeamIndex + 1, teamCfg.teamCount - 1);
-        }
-        bot.teamId = botTeamAssignment;
-
-        // Apply team color to torso
-        const teamColorHex = TEAM_COLORS[botTeamAssignment] || TEAM_COLORS[0];
-        const teamColor = new THREE.Color(teamColorHex);
-        (bot.torsoMesh.material as THREE.MeshStandardMaterial).color.copy(teamColor);
-
-        // Also color the helmet/head slightly with team tint
-        const headMat = bot.headMesh.material as THREE.MeshStandardMaterial;
-        headMat.color.copy(teamColor).multiplyScalar(0.5).add(new THREE.Color(0x334155).multiplyScalar(0.5));
-      }
-
+      // Team ids and team-color tinting are applied inside spawnBot so the
+      // GLTF character is BORN with its team color.
       bots.push(bot);
     }
     }
@@ -5171,6 +5190,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             bot.lastAnimState = desired;
           }
 
+          // Weapon-hold + jump pose layer: keeps the weapon gripped correctly
+          // (two-hand rifle / pistol / melee) through idle, walk, run and air.
+          const airborne = bot.velocity.y > 0.4 || bot.velocity.y < -0.9;
+          applyHoldPose(bot.characterInstance, {
+            hold: bot.holdKind || 'rifle',
+            speed,
+            airborne,
+            vy: bot.velocity.y,
+            aimPitch: 0,
+            time: time * 0.001,
+            reloadHint: bot.botIsReloading ? 1 : 0,
+          }, delta);
+
           // The mixer drives all body movement (including subtle idle
           // breathing), so we don't apply procedural leg/arm rotation or
           // body tilt. Keep meshGroup transform clean except for yaw which
@@ -5469,14 +5501,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const briggsDir = briggsTarget.clone().sub(game.c2BriggsPos);
           briggsDir.y = 0; // Only move horizontally
           const briggsDist = briggsDir.length();
+          let briggsSpeed = 0;
           if (briggsDist > 1.5) {
             briggsDir.normalize().multiplyScalar(Math.min(briggsDist - 1.0, 4 * dt));
             game.c2BriggsPos.add(briggsDir);
+            briggsSpeed = briggsDir.length() / Math.max(dt, 0.001);
           }
           game.c2BriggsPos.y = 0; // Clamp to ground
           game.c2BriggsGroup.position.copy(game.c2BriggsPos);
           // Face player direction
           game.c2BriggsGroup.lookAt(game.playerPos.x, 0, game.playerPos.z);
+          // Animate Briggs + the other friendly NPCs (mixer + weapon hold)
+          if (game.c2NpcMixers) {
+            for (const npc of game.c2NpcMixers) {
+              npc.mixer.update(dt);
+              const desired: AnimName = briggsSpeed > 0.5 ? 'Run' : 'Idle';
+              if (npc.currentAction !== npc.actions[desired] && npc.actions[desired]) {
+                transitionTo(npc, desired, 0.25);
+              }
+              applyHoldPose(npc, { hold: 'rifle', speed: briggsSpeed, airborne: false, vy: 0, aimPitch: 0, time: time * 0.001 }, dt);
+            }
+          }
         }
 
         // --- Forest patrol AI ---
@@ -5490,6 +5535,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           if (pb.c2PatrolWait! > 0) {
             pb.c2PatrolWait! -= dt;
+            // Idle hold while paused at the waypoint
+            if (pb.characterInstance) {
+              pb.characterInstance.mixer.update(dt);
+              if (pb.lastAnimState !== 'Idle') { transitionTo(pb.characterInstance, 'Idle', 0.25); pb.lastAnimState = 'Idle'; }
+              applyHoldPose(pb.characterInstance, { hold: pb.holdKind || 'rifle', speed: 0, airborne: false, vy: 0, aimPitch: 0, time: time * 0.001 }, dt);
+            }
             continue;
           }
 
@@ -5506,10 +5557,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           pb.meshGroup.position.copy(pb.position);
           pb.rotationY = Math.atan2(toWp.x, toWp.z);
           pb.meshGroup.rotation.y = pb.rotationY;
-          // Walk animation
-          pb.walkAnimPhase = (pb.walkAnimPhase + dt * 6) % (Math.PI * 2);
-          if (pb.leftLeg) pb.leftLeg.position.y = 0.35 + Math.sin(pb.walkAnimPhase) * 0.08;
-          if (pb.rightLeg) pb.rightLeg.position.y = 0.35 + Math.sin(pb.walkAnimPhase + Math.PI) * 0.08;
+          // Animation: real mixer for GLTF characters, procedural bob otherwise
+          if (pb.characterInstance) {
+            pb.characterInstance.mixer.update(dt);
+            if (pb.lastAnimState !== 'Walk') { transitionTo(pb.characterInstance, 'Walk', 0.25); pb.lastAnimState = 'Walk'; }
+            applyHoldPose(pb.characterInstance, { hold: pb.holdKind || 'rifle', speed: 3, airborne: false, vy: 0, aimPitch: 0, time: time * 0.001 }, dt);
+          } else {
+            pb.walkAnimPhase = (pb.walkAnimPhase + dt * 6) % (Math.PI * 2);
+            if (pb.leftLeg) pb.leftLeg.position.y = 0.35 + Math.sin(pb.walkAnimPhase) * 0.08;
+            if (pb.rightLeg) pb.rightLeg.position.y = 0.35 + Math.sin(pb.walkAnimPhase + Math.PI) * 0.08;
+          }
 
           // Detect player if close and shoot
           const toPlayer = game.playerPos.clone().sub(pb.position);
@@ -5557,6 +5614,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 if (game.playerHealth <= 0) game.playerIsDead = true;
               }
             }
+          }
+          // Aim-ready idle hold
+          if (tg.characterInstance) {
+            tg.characterInstance.mixer.update(dt);
+            if (tg.lastAnimState !== 'Idle') { transitionTo(tg.characterInstance, 'Idle', 0.25); tg.lastAnimState = 'Idle'; }
+            applyHoldPose(tg.characterInstance, { hold: tg.holdKind || 'rifle', speed: 0, airborne: false, vy: 0, aimPitch: 0, time: time * 0.001 }, dt);
           }
         }
 
@@ -5609,8 +5672,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 gTorso = gGltfBuild.torsoMesh;
                 gLL = gGltfBuild.leftLeg;
                 gRL = gGltfBuild.rightLeg;
-                gGun = buildThirdPersonWeapon('m4_assault');
-                attachWeaponToGLTFCharacter(gMesh, gCharacterInstance, gGun);
+                gGun = new THREE.Group();
+                equipCharacterWeapon(gCharacterInstance, 'm4_assault');
               } else {
                 const gMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
                 const gHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
@@ -5632,6 +5695,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 leftLeg: gLL, rightLeg: gRL, leftArm: null as any, rightArm: null as any,
                 botGunMesh: gGun, walkAnimPhase: 0, flinchTimer: 0,
                 characterInstance: gCharacterInstance, useGLTFModel: !!gCharacterInstance, lastAnimState: null,
+                holdKind: 'rifle',
                 classConfig: CLASSES[0], activeWeapon: CLASSES[0].primaryWeapon,
                 isPrimary: true, isDead: false, respawnTimer: 0,
                 kills: 0, deaths: 0, score: 0,
@@ -5669,8 +5733,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               bTorso = bGltfBuild.torsoMesh;
               bLL = bGltfBuild.leftLeg;
               bRL = bGltfBuild.rightLeg;
-              const bGun = buildThirdPersonWeapon('m4_assault');
-              attachWeaponToGLTFCharacter(bMesh, bCharacterInstance, bGun);
+              const bGun = new THREE.Group();
+              equipCharacterWeapon(bCharacterInstance, 'm4_assault');
             } else {
               const bMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.8, flatShading: true });
               const bHMat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7, flatShading: true });
@@ -5690,6 +5754,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               leftLeg: bLL, rightLeg: bRL, leftArm: null as any, rightArm: null as any,
               botGunMesh: null as any, walkAnimPhase: 0, flinchTimer: 0,
               characterInstance: bCharacterInstance, useGLTFModel: !!bCharacterInstance, lastAnimState: null,
+              holdKind: 'rifle',
               classConfig: CLASSES[0], activeWeapon: CLASSES[0].primaryWeapon,
               isPrimary: true, isDead: false, respawnTimer: 0,
               kills: 0, deaths: 0, score: 0,
@@ -5733,6 +5798,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               score: 200 + game.playerKills * 50, headshots: game.playerHeadshots || 0,
               timePlayedSeconds: Math.floor(game.playerTimePlayedSeconds || 0),
             }]);
+          }
+        }
+
+        // --- Backup enemies: hold position, animate mixer + weapon hold ---
+        for (const bk of game.c2BackupBots) {
+          if (bk.health <= 0) continue;
+          if (bk.characterInstance) {
+            bk.characterInstance.mixer.update(dt);
+            if (bk.lastAnimState !== 'Idle') { transitionTo(bk.characterInstance, 'Idle', 0.25); bk.lastAnimState = 'Idle'; }
+            applyHoldPose(bk.characterInstance, { hold: bk.holdKind || 'rifle', speed: 0, airborne: false, vy: 0, aimPitch: 0, time: time * 0.001 }, dt);
           }
         }
 
@@ -5900,6 +5975,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (!p.characterInstance) return;
         if (!p._lastFramePos) p._lastFramePos = p.position.clone();
         const moved = p.position.distanceTo(p._lastFramePos);
+        // Track vertical velocity for the jump tuck (snapshots only carry Y).
+        const lastY = p._lastFramePos.y;
         p._lastFramePos.copy(p.position);
         // moved is in world units per frame; convert to a rough m/s estimate
         // (delta is capped at ~0.05s, so divide by ~0.05 to get m/s).
@@ -5911,6 +5988,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           p.lastAnimState = desired;
         }
         p.characterInstance.mixer.update(delta);
+
+        // Weapon-hold pose layer (remote players hold their weapon through
+        // idle/walk/run/jump like bots do).
+        const vy = (p.position.y - lastY) / Math.max(delta, 0.001);
+        applyHoldPose(p.characterInstance, {
+          hold: p.holdKind || 'rifle',
+          speed: speedMs,
+          airborne: vy > 0.4 || vy < -0.9,
+          vy,
+          aimPitch: THREE.MathUtils.clamp(p.pitch || 0, -1.2, 1.2),
+          time: performance.now() * 0.001,
+        }, delta);
       });
 
       // Render Next Frame
@@ -6089,6 +6178,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       window.removeEventListener('keyup', handleKeyUp);
 
       renderer.dispose();
+    };
+    })().then(fn => {
+      if (typeof fn !== 'function') return; // early-exit body produced no cleanup
+      if (disposed) fn();
+      else cleanup = fn;
+    });
+
+    return () => {
+      disposed = true;
+      cleanup();
     };
   }, [config, playerClass, playerName]);
 
