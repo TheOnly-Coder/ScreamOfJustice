@@ -16,6 +16,10 @@ export function MainMenu({ onClassicMode, onCampaignMode, user }: MainMenuProps)
   const [musicPlaying] = useState(true);
 
   const getCtx = useCallback(() => {
+    // Recreate after a close (unmount cleanup / StrictMode double-mount)
+    if (audioCtxRef.current && audioCtxRef.current.state === 'closed') {
+      audioCtxRef.current = null;
+    }
     if (!audioCtxRef.current) {
       audioCtxRef.current = new AudioContext();
       musicGainRef.current = audioCtxRef.current.createGain();
@@ -153,8 +157,14 @@ export function MainMenu({ onClassicMode, onCampaignMode, user }: MainMenuProps)
   useEffect(()=>{
     return ()=>{
       musicNodesRef.current.forEach(n=>{try{n.stop()}catch(e){}});
+      musicNodesRef.current = [];
       if(musicGainRef.current){const iv=(musicGainRef.current as any).__iv;if(iv)clearInterval(iv)}
-      if(audioCtxRef.current)audioCtxRef.current.close();
+      try {
+        if(audioCtxRef.current && audioCtxRef.current.state !== 'closed') audioCtxRef.current.close();
+      } catch(e) { /* already closed */ }
+      // Allow a StrictMode remount to start music fresh instead of dying early
+      musicStartedRef.current = false;
+      hoverPlayedRef.current = {};
     };
   },[]);
 

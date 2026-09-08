@@ -279,14 +279,16 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
       {/* ================= MIDDLE OVERLAY (Crosshair and action alerts) ================= */}
       <div id="hud-center" className="absolute inset-0 flex flex-col justify-center items-center pointer-events-none z-20">
-        
-        {/* Dynamic central crosshair and reactive hitmarkers */}
-        <div id="central-crosshair-element" className="relative flex justify-center items-center">
-          <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full shadow-[0_0_8px_#34d399]" />
-          <div className="absolute w-6 h-[2px] bg-emerald-400/80 -left-4" />
-          <div className="absolute w-6 h-[2px] bg-emerald-400/80 -right-4" />
-          <div className="absolute w-[2px] h-6 bg-emerald-400/80 -top-2" />
-          <div className="absolute w-[2px] h-6 bg-emerald-400/80 -bottom-4" />
+
+        {/* Dynamic central crosshair and reactive hitmarkers.
+            Gap is driven every frame by GameCanvas via --xgap so the crosshair
+            blooms with real weapon spread and tightens when aiming. */}
+        <div id="central-crosshair-element" data-ads="off" className="relative flex justify-center items-center">
+          <div className="xhair-line xhair-left" />
+          <div className="xhair-line xhair-right" />
+          <div className="xhair-line xhair-top" />
+          <div className="xhair-line xhair-bottom" />
+          <div className="xhair-dot" />
 
           {/* Body Shot Hitmarker (White/Cyan sharp X) */}
           {hitmarker === 'body' && (
@@ -311,6 +313,15 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </div>
           )}
         </div>
+
+        {/* NO AMMO alert — mirrors the dry-fire click, points at the reload key */}
+        {playerClip <= 0 && (
+          <div id="no-ammo-hint" className="mt-14 px-3.5 py-1.5 bg-amber-950/60 border border-amber-500/50 backdrop-blur-sm rounded-lg
+            text-amber-300 text-[11px] font-mono font-black tracking-[0.2em] uppercase animate-pulse shadow-xl flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+            NO AMMO — PRESS {(bindings.reload || 'R').toUpperCase()} TO RELOAD
+          </div>
+        )}
 
         {/* Tactical UI indicators */}
         {isLowHealth && (

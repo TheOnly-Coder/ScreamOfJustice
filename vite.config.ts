@@ -12,6 +12,17 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      // Keep the engine and the app in separate chunks: the app shell loads
+      // instantly, three.js streams in the background from the menu preload.
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            three: ['three'],
+          },
+        },
+      },
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

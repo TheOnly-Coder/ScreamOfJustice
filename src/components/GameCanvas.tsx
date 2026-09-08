@@ -776,6 +776,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     semiAutoFired: boolean;
     burstPending: number;
     burstTimer: number;
+    // Dry-fire latch: with an empty mag, holding the trigger must click ONCE
+    // (per press) instead of retriggering a loud sound every frame.
+    dryFireLatch: boolean;
+    lastDryFireTime: number;
+    // Flashing "NO AMMO" HUD hint timer (ms remaining)
+    noAmmoHintTimer: number;
 
     // Recoil, Blowback & Melee Animations
     recoilOffset: THREE.Vector3;
@@ -931,6 +937,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     semiAutoFired: false,
     burstPending: 0,
     burstTimer: 0,
+    dryFireLatch: false,
+    lastDryFireTime: -9999,
+    noAmmoHintTimer: 0,
     recoilOffset: new THREE.Vector3(0, 0, 0),
     recoilRot: new THREE.Vector3(0, 0, 0),
     slideMesh: null,
@@ -1101,6 +1110,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     let cleanup: () => void = () => {};
 
     (async () => {
+      // SFX bank decodes in the background — never blocks boot, samples
+      // simply swap in for the synth fallback as each file lands.
+      sounds.preloadAll().catch(() => {});
       await Promise.all([
         preloadCharacterModel().catch(err => {
           console.warn('[GAME] Character model preload failed; will use procedural fallback.', err);
@@ -1367,7 +1379,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 if (removed) {
                   scene.remove(removed.meshGroup);
                   removed.meshGroup.traverse(child => {
-                    if (child instanceof THREE.Mesh) child.geometry.dispose();
+                    if (child instanceof THREE.Mesh && !child.geometry.userData?.doNotDispose) child.geometry.dispose();
                   });
                 }
               }
@@ -1448,7 +1460,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 if (removed) {
                   scene.remove(removed.meshGroup);
                   removed.meshGroup.traverse(child => {
-                    if (child instanceof THREE.Mesh) child.geometry.dispose();
+                    if (child instanceof THREE.Mesh && !child.geometry.userData?.doNotDispose) child.geometry.dispose();
                   });
                 }
               }
@@ -1597,7 +1609,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               scene.add(line);
               game.tracers.push({ line, age: 0, maxAge: 120 });
 
-              sounds.playShoot(weaponType || 'AR');
+              sounds.playShootAt(weaponType || 'AR', game.playerPos.distanceTo(source.position));
             }
           }
           else if (msg.type === 'player_damaged') {
@@ -1736,7 +1748,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (pObj) {
                 scene.remove(pObj.meshGroup);
                 pObj.meshGroup.traverse(child => {
-                  if (child instanceof THREE.Mesh) child.geometry.dispose();
+                  if (child instanceof THREE.Mesh && !child.geometry.userData?.doNotDispose) child.geometry.dispose();
                 });
                 game.otherPlayers.delete(leftId);
 
@@ -2876,7 +2888,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
           onWeaponChange(game.activeWeapon);
           onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
-          sounds.playReload();
+          sounds.playReload(game.activeWeapon.type);
           // Build weapon model (works in tutorial mode too)
           if (game.weaponGroup) {
             while (game.weaponGroup.children.length > 0) {
@@ -2934,6 +2946,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (key === keyFire) {
         game.isFiring = false;
         game.semiAutoFired = false;
+        game.dryFireLatch = false; // re-arm dry-fire click for next press
       }
     };
 
@@ -2963,7 +2976,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       onWeaponChange(game.activeWeapon);
       onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
 
-      sounds.playReload();
+      sounds.playReload(game.activeWeapon.type);
       buildFirstPersonWeapon();
     };
 
@@ -2972,7 +2985,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (game.playerReserve <= 0) return;
       game.isReloading = true;
       game.reloadTimeRemaining = game.activeWeapon.reloadTime;
-      sounds.playReload();
+      sounds.playReload(game.activeWeapon.type);
       if (config.isCampaign && config.mapId === 'tutorial' && game.tutStage === 5 && !game.tutReloadStageDone) {
         game.tutReloadStageDone = true;
       }
@@ -3014,6 +3027,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (e.button === 0) { // Left Click release
         game.isFiring = false;
         game.semiAutoFired = false;
+        game.dryFireLatch = false; // re-arm dry-fire click for next press
       } else if (e.button === 2) { // Right Click release
         game.isADS = false;
       }
@@ -3052,8 +3066,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       if (game.playerClip <= 0) {
-        sounds.playReload(); // Dry fire sound
+        // Dry fire: a quiet mechanical click, ONCE per trigger press.
+        // (Holding the trigger on an empty mag must never spam sounds —
+        // the latch resets when the button is released.)
         game.burstPending = 0;
+        if (!game.dryFireLatch && now - game.lastDryFireTime > 250) {
+          game.dryFireLatch = true;
+          game.lastDryFireTime = now;
+          game.noAmmoHintTimer = 1400; // show "NO AMMO — RELOAD" hint on HUD
+          sounds.playDryFire();
+        }
         return;
       }
 
@@ -3122,13 +3144,46 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const raycaster = new THREE.Raycaster();
       // Center of screen raycast
       const centerCoords = new THREE.Vector2(0, 0);
-      
-      // Ensure camera is perfectly aimed at the user's latest mouse position before raycasting
+
+      // Aim exactly where the player is LOOKING right now. The camera renders
+      // with pitch/yaw + the live recoilRot offset (see camera update below), so
+      // the shot ray must use the SAME combined rotation — otherwise bullets
+      // diverge from the crosshair while the recoil offset decays (spray = wild
+      // mismatch). Raycasting with the rendered rotation keeps every bullet on
+      // the crosshair; the NEW recoil impulse of this shot is applied after.
       camera.position.copy(game.playerPos);
-      camera.rotation.set(game.pitch, game.yaw, 0, 'YXZ');
+      camera.rotation.set(
+        game.pitch + game.recoilRot.x,
+        game.yaw + game.recoilRot.y,
+        0,
+        'YXZ'
+      );
       camera.updateMatrixWorld(true);
-      
+
       raycaster.setFromCamera(centerCoords, camera);
+
+      // Realistic weapon sway: bullets get a tiny cone spread driven by the
+      // weapon's accuracy stat, movement speed, being airborne, and hip-fire.
+      // Standing ADS shots keep a perfect zero (crosshair-true).
+      if (!hacksRef.current.noRecoil) {
+        const wDef = game.activeWeapon;
+        const accuracy = Math.min(1, Math.max(0.1, (wDef as any).accuracy ?? 0.75));
+        const moveSpeed = Math.hypot(game.playerVel.x, game.playerVel.z);
+        let spreadRad = (1 - accuracy) * 0.012; // base per-weapon bloom
+        spreadRad += Math.min(0.014, moveSpeed * 0.0022); // strafing/running
+        if (Math.abs(game.playerVel.y) > 0.5) spreadRad += 0.02; // airborne is wild
+        if (game.isADS) spreadRad *= 0.22; // aiming down sights tightens heavily
+        if (spreadRad > 0.0001) {
+          const angle = Math.random() * Math.PI * 2;
+          const radius = Math.sqrt(Math.random()) * spreadRad;
+          const rightAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+          const upAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+          raycaster.ray.direction
+            .add(rightAxis.multiplyScalar(Math.cos(angle) * radius))
+            .add(upAxis.multiplyScalar(Math.sin(angle) * radius))
+            .normalize();
+        }
+      }
 
       // Pass 5: Camera & Viewmodel Recoil Impulse (Applied AFTER raycast so first shot is accurate)
       if (!hacksRef.current.noRecoil) {
@@ -3267,6 +3322,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const explosionRadius = 6;
           spawnParticles(hitPoint, '#ef4444', 30); // Big explosion flash
           spawnParticles(hitPoint, '#f97316', 20);
+          sounds.playExplosion();
 
           bots.forEach(b => {
             if (b.isDead) return;
@@ -3773,8 +3829,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const transferred = Math.min(needed, game.playerReserve);
           game.playerClip += transferred;
           game.playerReserve -= transferred;
+          game.dryFireLatch = false; // fresh mag — allow firing again
+          game.noAmmoHintTimer = 0;
           onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
         }
+      }
+
+      // Decay the HUD "NO AMMO" hint
+      if (game.noAmmoHintTimer > 0) {
+        game.noAmmoHintTimer -= delta * 1000;
       }
 
       // Hack: Auto Heal
@@ -3793,6 +3856,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         } else if (touchInputsRef.current.keys[keyFire] === false && game.isFiring) {
           game.isFiring = false;
           game.semiAutoFired = false;
+          game.dryFireLatch = false; // re-arm dry-fire click for next press
         }
       }
 
@@ -3842,7 +3906,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           game.playerClip = game.activeWeapon.maxAmmo;
           onPlayerHealthUpdate(game.playerHealth, game.playerMaxHealth);
           onPlayerAmmoUpdate(game.playerClip, game.playerReserve);
-          sounds.playReload();
+          sounds.playReload(game.activeWeapon.type);
         }
       }
 
@@ -4676,6 +4740,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Anti-stuck clipping disabled for player to prevent stutter, sweep tests handle walls
 
+        // Footsteps — grounded horizontal movement accumulates distance and
+        // triggers a step sound every stride (faster cadence while sprinting).
+        {
+          const stepSpeed = Math.hypot(game.playerVel.x, game.playerVel.z);
+          if (isOnGround && stepSpeed > 1.2) {
+            game._stepDistAcc = (game._stepDistAcc || 0) + stepSpeed * delta;
+            const stride = game.keys['shift'] ? 2.0 : 2.6;
+            if (game._stepDistAcc >= stride) {
+              game._stepDistAcc = 0;
+              sounds.playFootstep('concrete', game.keys['shift'] === true);
+            }
+          } else {
+            game._stepDistAcc = 0;
+          }
+        }
+
         // Apply final position and level-locked 'YXZ' rotation to eliminate sideways rolling
         camera.position.copy(game.playerPos);
         camera.rotation.set(game.pitch + game.recoilRot.x, game.yaw + game.recoilRot.y, 0, 'YXZ');
@@ -4704,6 +4784,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         camera.position.copy(game.playerPos);
         const tilt = Math.min(Math.PI / 2, ((4000 - game.playerRespawnTimer) / 1000) * (Math.PI / 2));
         camera.rotation.set(game.pitch, game.yaw, tilt, 'YXZ');
+      }
+
+      // 2b. Dynamic crosshair feedback — the HUD crosshair blooms with the
+      // same spread model the shots use (movement, airborne, recoil) and
+      // tightens when aiming, so what the player SEES matches where bullets GO.
+      {
+        const xhairEl = document.getElementById('central-crosshair-element');
+        if (xhairEl) {
+          if (game.playerIsDead) {
+            xhairEl.style.opacity = '0';
+          } else {
+            xhairEl.style.opacity = '1';
+            const accuracy = Math.min(1, Math.max(0.1, (game.activeWeapon as any).accuracy ?? 0.75));
+            const moveSpeed = Math.hypot(game.playerVel.x, game.playerVel.z);
+            let spreadRad = (1 - accuracy) * 0.012;
+            spreadRad += Math.min(0.014, moveSpeed * 0.0022);
+            if (Math.abs(game.playerVel.y) > 0.5) spreadRad += 0.02;
+            if (game.isADS) spreadRad *= 0.22;
+            // Recent shots open the crosshair briefly (recoil visual weight)
+            const recoilNow = Math.abs(game.recoilRot.x) + Math.abs(game.recoilRot.y);
+            spreadRad += recoilNow * 1.6;
+            const gapPx = Math.min(26, 5 + spreadRad * 620);
+            xhairEl.style.setProperty('--xgap', `${gapPx.toFixed(1)}px`);
+            xhairEl.dataset.ads = game.isADS ? 'on' : 'off';
+          }
+        }
       }
 
       // 3. Update Custom Particles
@@ -6134,6 +6240,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const line = new THREE.Line(traceGeo, traceMat);
       scene.add(line);
       game.tracers.push({ line, age: 0, maxAge: 100 });
+
+      // Distant gunfire — modeled by distance so battles sound like battles
+      sounds.playShootAt(bot.activeWeapon.type, bot.position.distanceTo(game.playerPos));
     };
 
     // Begin looping
@@ -6149,20 +6258,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       game.otherPlayers.forEach((pObj) => {
         scene.remove(pObj.meshGroup);
         pObj.meshGroup.traverse(child => {
-          if (child instanceof THREE.Mesh) child.geometry.dispose();
+          if (child instanceof THREE.Mesh && !child.geometry.userData?.doNotDispose) child.geometry.dispose();
         });
       });
       game.otherPlayers.clear();
 
-      // Clean scene geometries
+      // Clean scene geometries — skip shared GLB template resources
+      // (cached weapon/character clones reuse the same geometry+materials;
+      // disposing them here would break every future clone, e.g. on a
+      // StrictMode remount or a quick re-deploy).
       scene.traverse(obj => {
         if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach(m => m.dispose());
-          } else {
-            obj.material.dispose();
-          }
+          if (!obj.geometry.userData?.doNotDispose) obj.geometry.dispose();
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          mats.forEach(m => { if (!(m as any).userData?.doNotDispose) m.dispose(); });
         }
       });
 

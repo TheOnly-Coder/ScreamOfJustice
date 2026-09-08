@@ -1,13 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { GameState, CharacterClass, MatchConfig, MatchStats, KillFeedEntry, KeyBindings, DEFAULT_KEYBINDINGS, TouchBindings, DEFAULT_TOUCHBINDINGS, Weapon, GraphicsQuality, isTeamMode, CLASSES, WEAPONS } from './types';
 import { Lobby } from './components/Lobby';
-import { GameCanvas } from './components/GameCanvas';
+// GameCanvas pulls in all of three.js — keep it out of the landing bundle so
+// the menu boots instantly; the chunk streams in the background while the
+// user is still in the lobby / briefing.
+const GameCanvas = lazy(() => import('./components/GameCanvas').then(m => ({ default: m.GameCanvas })));
 import { GameHUD } from './components/GameHUD';
 import { ScoreboardScreen } from './components/ScoreboardScreen';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { MainMenu } from './components/MainMenu';
 import { CampaignGlobe } from './components/CampaignGlobe';
 import { ChapterSelect } from './components/ChapterSelect';
+import { DeployScreen } from './components/DeployScreen';
 import { db, getActiveBackend, defaultDb, fastDb } from './lib/firebase';
 import { doc, updateDoc, collection, addDoc, setDoc, getDoc } from 'firebase/firestore';
 import { ref as rtdbRef, update as rtdbUpdate, push as rtdbPush, set as rtdbSet, get as rtdbGet } from 'firebase/database';
@@ -156,7 +160,7 @@ export default function App() {
       keys: {}
     };
 
-    setGameState('PLAYING');
+    setGameState('DEPLOYING');
   };
 
   const handleStatsUpdate = (updatedStats: MatchStats[]) => {
@@ -349,6 +353,21 @@ export default function App() {
     setGameState('CAMPAIGN_GLOBE');
   };
 
+  // Warm the heavy assets while the player is still browsing the menu —
+  // the game chunk (three.js), soldier + weapon models and the SFX bank all
+  // land in cache here, so a match boots in a fraction of the old time.
+  const menuPreloadRef = useRef(false);
+  useEffect(() => {
+    if (gameState !== 'MAIN_MENU' || menuPreloadRef.current) return;
+    menuPreloadRef.current = true;
+    import('./components/GameCanvas').catch(() => { menuPreloadRef.current = false; });
+    Promise.all([
+      import('./game/CharacterModelLoader').then(m => m.preloadCharacterModel()),
+      import('./game/WeaponModelLoader').then(m => m.preloadWeaponModels()),
+      import('./lib/sounds').then(m => m.sounds.preloadAll()),
+    ]).catch(() => {});
+  }, [gameState]);
+
   const handleStartTutorialChapter = (chapter: number) => {
     if (chapter === 1) {
       // Chapter 1: Tutorial - load assault class on tutorial map, no bots
@@ -375,7 +394,7 @@ export default function App() {
       setAbilityCooldownLeft(0);
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-      setGameState('PLAYING');
+      setGameState('DEPLOYING');
     } else if (chapter === 2) {
       // Chapter 2: Behind Enemy Lines - RPG primary, Pistol secondary
       const campaignClass: CharacterClass = {
@@ -413,7 +432,7 @@ export default function App() {
       setAbilityCooldownLeft(0);
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-      setGameState('PLAYING');
+      setGameState('DEPLOYING');
     } else if (chapter === 3) {
       // Chapter 3: Cutscene - The Road Home (no gameplay, just cinematics)
       const cutsceneConfig: MatchConfig = {
@@ -451,7 +470,7 @@ export default function App() {
       setAbilityCooldownLeft(0);
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-      setGameState('PLAYING');
+      setGameState('DEPLOYING');
     } else if (chapter === 4) {
       // Chapter 4: The Signal - Branching narrative
       const c4Config: MatchConfig = {
@@ -489,7 +508,7 @@ export default function App() {
       setAbilityCooldownLeft(0);
       setKillFeed([]);
       touchInputsRef.current = { moveX: 0, moveY: 0, lookDeltaX: 0, lookDeltaY: 0, keys: {} };
-      setGameState('PLAYING');
+      setGameState('DEPLOYING');
     }
   };
 
@@ -552,8 +571,27 @@ export default function App() {
         />
       )}
 
+      {gameState === 'DEPLOYING' && playerClass && matchConfig && (
+        <DeployScreen
+          config={matchConfig}
+          playerClass={playerClass}
+          playerName={playerName}
+          onDeploy={() => setGameState('PLAYING')}
+          onAbort={() => setGameState('MAIN_MENU')}
+        />
+      )}
+
       {gameState === 'PLAYING' && playerClass && matchConfig && (
         <div className="w-full h-full relative">
+          <Suspense fallback={
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 gap-4">
+              <div className="text-2xl font-black tracking-[0.3em] text-emerald-400" style={{ fontFamily: 'var(--soj-font-display, sans-serif)' }}>SCREAM OF JUSTICE</div>
+              <div className="w-64 h-1 bg-slate-800 rounded-full overflow-hidden">
+                <div className="h-full w-1/3 bg-emerald-500 soj-sweep" />
+              </div>
+              <div className="text-[10px] font-mono tracking-[0.35em] text-slate-500 uppercase">loading combat systems</div>
+            </div>
+          }>
           <GameCanvas
             graphicsQuality={graphicsQuality}
             config={matchConfig}
@@ -574,6 +612,7 @@ export default function App() {
             touchInputsRef={touchInputsRef}
             useTouchControls={useTouchControls}
           />
+          </Suspense>
           {!matchConfig?.spectatorMode && !(matchConfig?.isCampaign && matchConfig?.mapId === 'campaign3') && <GameHUD
             graphicsQuality={graphicsQuality}
             onGraphicsChange={setGraphicsQuality}

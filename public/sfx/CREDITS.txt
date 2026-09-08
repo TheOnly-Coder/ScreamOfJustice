@@ -1,0 +1,25 @@
+Sound effects credits
+=====================
+
+All sound effects in /public/sfx are Creative Commons 0 (CC0 / public
+domain) — no attribution required, credited here as good practice.
+
+Kenney (kenney.nl) — CC0:
+  - "Interface Sounds" pack: dry-fire click, UI clicks/confirmations,
+    deploy sting, typewriter tick
+  - "UI Audio" pack: hover rolls, toggle switches
+  - "Impact Sounds" pack: hitmarker punches, headshot glass dink,
+    player footsteps (concrete/wood)
+  - "Sci-Fi Sounds" pack: RPG launch thump, explosion, death rumble,
+    ability force-field, blaster shots (reserved)
+
+OpenGameArt.org — CC0:
+  - "Gunshot Sounds" by Raassh — rifle (SKS), sniper (Mosin), shotgun,
+    pistol (CZ) shots, pitch/eq-tuned per weapon class
+  - "Gun reload sounds" by Joaken — magazine & assault rifle reloads
+  - "Shotgun Reload Sound effects" — shotgun shell handling
+  - "Gunshots" by LarkPay — small-caliber reference shots
+
+Tweaks applied (ffmpeg): loudness normalization (-13..-18 LUFS), silence
+trimming, edge fades, pitch shifts and lowpass filtering to derive
+per-weapon-class variants from the recorded shots.

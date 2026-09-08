@@ -22,6 +22,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 const BASE_URL = ((import.meta as any).env?.BASE_URL) || '/';
@@ -126,6 +127,8 @@ export function isMeleeKind(kind: WeaponModelKind): boolean {
 // ---------------------------------------------------------------------------
 
 const loader = new GLTFLoader();
+// Models are meshopt-compressed by gltf-transform (4x smaller downloads)
+loader.setMeshoptDecoder(MeshoptDecoder);
 
 interface LoadedWeapon {
   /** Normalized template scene — CLONE before attaching. */
@@ -364,6 +367,19 @@ async function loadWeaponModel(kind: WeaponModelKind): Promise<LoadedWeapon | nu
 
     fixMaterials(root);
     addAddon(kind, root, spec);
+
+    // Cached templates are CLONED for every instance (SkeletonUtils shares
+    // geometry + materials between clones). Mark them so consumer cleanups
+    // never dispose these shared GPU resources — otherwise a React
+    // StrictMode remount leaves every later clone invisible.
+    root.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) {
+        m.geometry.userData.doNotDispose = true;
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        mats.forEach(mat => { (mat as any).userData.doNotDispose = true; });
+      }
+    });
 
     const cached: LoadedWeapon = { template: root, muzzleZ: spec.muzzleZ ?? -spec.length * 0.5 };
     _cache.set(kind, cached);

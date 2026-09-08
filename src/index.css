@@ -258,3 +258,76 @@ body {
   -moz-user-select: none;
   user-select: none;
 }
+
+/* ============================================================
+   Dynamic crosshair — gap driven per-frame by GameCanvas (--xgap)
+   Blooms with movement/recoil spread, tightens while aiming.
+   ============================================================ */
+#central-crosshair-element {
+  --xgap: 8px;
+  width: 0;
+  height: 0;
+}
+#central-crosshair-element .xhair-line {
+  position: absolute;
+  background: rgba(52, 211, 153, 0.92); /* emerald-400 */
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.55);
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+#central-crosshair-element .xhair-left,
+#central-crosshair-element .xhair-right {
+  width: 11px;
+  height: 2px;
+  top: 0;
+  transform: translateY(-50%);
+}
+#central-crosshair-element .xhair-top,
+#central-crosshair-element .xhair-bottom {
+  width: 2px;
+  height: 11px;
+  left: 0;
+  transform: translateX(-50%);
+}
+#central-crosshair-element .xhair-left   { right: var(--xgap); }
+#central-crosshair-element .xhair-right  { left:  var(--xgap); }
+#central-crosshair-element .xhair-top    { bottom: var(--xgap); }
+#central-crosshair-element .xhair-bottom { top:    var(--xgap); }
+#central-crosshair-element .xhair-dot {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background: rgba(52, 211, 153, 0.95);
+  box-shadow: 0 0 7px rgba(52, 211, 153, 0.7);
+  transition: all 160ms ease;
+}
+/* While aiming: crosshair tightens visually and cools to a steel-cyan */
+#central-crosshair-element[data-ads='on'] .xhair-line {
+  background: rgba(103, 232, 249, 0.95);
+  box-shadow: 0 0 6px rgba(103, 232, 249, 0.6);
+}
+#central-crosshair-element[data-ads='on'] .xhair-dot {
+  width: 2px;
+  height: 2px;
+  background: rgba(103, 232, 249, 0.95);
+  box-shadow: 0 0 7px rgba(103, 232, 249, 0.75);
+}
+/* Hide the four lines entirely for melee-only viewmodels? kept — consistent HUD */
+
+/* Hitmarker pop animations (referenced by the HUD, previously undefined) */
+@keyframes sojPingOnce {
+  0%   { transform: scale(1.6); opacity: 0; }
+  35%  { transform: scale(1);   opacity: 1; }
+  100% { transform: scale(0.85); opacity: 0; }
+}
+@keyframes sojBounceOnce {
+  0%   { transform: scale(2.1);  opacity: 0; }
+  30%  { transform: scale(1.1);  opacity: 1; }
+  55%  { transform: scale(0.95); opacity: 1; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+.animate-ping-once   { animation: sojPingOnce 0.30s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-bounce-once { animation: sojBounceOnce 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards; }

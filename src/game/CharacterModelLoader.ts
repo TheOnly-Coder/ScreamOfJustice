@@ -26,6 +26,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 // Vite exposes BASE_URL via import.meta.env, but the project's tsconfig
@@ -88,6 +89,8 @@ export function preloadCharacterModel(): Promise<LoadedCharacterModel> {
   _loadingPromise = (async () => {
     try {
       const loader = new GLTFLoader();
+      // Models are meshopt-compressed by gltf-transform (4x smaller downloads)
+      loader.setMeshoptDecoder(MeshoptDecoder);
       const gltf = await loader.loadAsync(MODEL_URL);
 
       // --- Normalize the model: scale to TARGET_HEIGHT, feet at Y=0, face -Z ---
@@ -110,6 +113,17 @@ export function preloadCharacterModel(): Promise<LoadedCharacterModel> {
       // 3. Apply uniform scale on the wrapper
       normalized.scale.setScalar(scaleFactor);
       normalized.add(gltf.scene);
+
+      // Shared template: mark resources as do-not-dispose (see the note in
+      // WeaponModelLoader — clones share geometry/materials with this cache).
+      gltf.scene.traverse(o => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) {
+          m.geometry.userData.doNotDispose = true;
+          const mats = Array.isArray(m.material) ? m.material : [m.material];
+          mats.forEach(mat => { (mat as any).userData.doNotDispose = true; });
+        }
+      });
 
       // Compute head world Y for callers (after normalization).
       let headBone: THREE.Object3D | null = null;

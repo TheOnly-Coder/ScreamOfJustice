@@ -123,7 +123,7 @@ export const Lobby: React.FC<LobbyProps> = ({
     const cls = CLASSES.find(c => c.id === clsId) || CLASSES[0];
     setSelectedPrimaryId(cls.primaryWeapon.id);
     setSelectedSecondaryId(cls.secondaryWeapon.id);
-    sounds.playReload();
+    sounds.playUi('toggle');
   };
 
   // Fetch active multiplayer rooms currently being played
@@ -287,7 +287,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   };
 
   const handleStart = async () => {
-    sounds.playKill(); // Match start victorious sound chime
+    sounds.playUi('deploy'); // Match start deploy sting
     const effectivelyMultiplayer = isMultiplayer || lobbyMode === 'JOIN';
     const targetRoom = effectivelyMultiplayer ? (roomCode || customRoomInput.trim() || 'MAIN').toUpperCase() : 'MAIN';
     
@@ -348,7 +348,7 @@ export const Lobby: React.FC<LobbyProps> = ({
             <h1 className="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
               SCREAM OF JUSTICE <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-mono">3D FPS</span>
             </h1>
-            <p className="text-xs text-slate-400">Tactical low-poly first person combat — bots, squads &amp; campaign</p>
+            <p className="text-xs text-slate-400">Tactical first-person combat — bots, squads &amp; campaign</p>
           </div>
         </div>
 
@@ -1214,9 +1214,13 @@ export const Lobby: React.FC<LobbyProps> = ({
             <button
               id="start-match-button"
               onClick={handleStart}
-              className="w-full py-4 px-6 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-sans font-bold tracking-wide rounded-2xl shadow-xl shadow-emerald-500/10 flex items-center justify-center gap-2 transform active:scale-[0.98] transition-all"
+              onMouseEnter={() => sounds.playUi('hover')}
+              className="group relative w-full py-4 px-6 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-sans font-bold tracking-wide rounded-2xl shadow-xl shadow-emerald-500/10 flex items-center justify-center gap-2 transform active:scale-[0.98] transition-all overflow-hidden"
             >
-              <Play className="w-5 h-5 fill-white" /> START COMBAT MATCH
+              <span className="relative z-10 flex items-center gap-2">
+                <Play className="w-5 h-5 fill-white" /> START COMBAT MATCH
+              </span>
+              <span className="absolute inset-0 soj-sweep bg-gradient-to-r from-transparent via-white/20 to-transparent" />
             </button>
             </div>
             )}

@@ -1,6 +1,6 @@
 # Scream Of Justice
 
-A tactical low-poly 3D FPS built with React + Three.js — play it on this repo's
+A fast, tactical 3D FPS built with React + Three.js — play it on this repo's
 GitHub Pages (see Deployments), or clone `/main` and run it locally.
 
 ## What's inside

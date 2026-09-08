@@ -1,6 +1,6 @@
 {
-  "name": "Remix: Remix: Remix: Remix: Remix: Remix: Remix: Remix: Remix: Remix: Remix: Low-Poly 3D FPS Combat",
-  "description": "An optimized, high-action low-poly 3D first-person shooter featuring bot matches, multi-class system, and pre-match lobby.",
+  "name": "Scream of Justice — Tactical 3D FPS",
+  "description": "An optimized, high-action tactical 3D first-person shooter featuring bot matches, a multi-class system, online lobbies, and a single-player campaign.",
   "requestFramePermissions": [
     "pointerLock"
   ],
