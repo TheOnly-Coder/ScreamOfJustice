@@ -178,11 +178,12 @@ class SoundManager {
     }
   }
 
-  /** First-person shot: present but not deafening, small pitch jitter so it never drones. */
+  /** First-person shot: kept well under the rest of the mix per user feedback. */
   playShoot(type: string) {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf(this.shootSampleFor(type), { vol: 0.5, jitter: 0.045 })) return;
+    // KNIFE has no gunshot sample — always use the quiet swoosh synth below.
+    if (type !== 'KNIFE' && this.playBuf(this.shootSampleFor(type), { vol: 0.22, jitter: 0.045 })) return;
 
     // --- synth fallback (legacy) ---
     if (!this.ctx) return;
@@ -205,7 +206,7 @@ class SoundManager {
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(120, now);
         osc.frequency.exponentialRampToValueAtTime(20, now + 0.25);
-        oscGain.gain.setValueAtTime(0.8, now);
+        oscGain.gain.setValueAtTime(0.35, now);
         oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
         break;
       case 'LMG':
@@ -214,7 +215,7 @@ class SoundManager {
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(100, now);
         osc.frequency.exponentialRampToValueAtTime(20, now + 0.1);
-        oscGain.gain.setValueAtTime(0.3, now);
+        oscGain.gain.setValueAtTime(0.16, now);
         oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
         break;
       case 'SMG':
@@ -223,7 +224,7 @@ class SoundManager {
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(150, now);
         osc.frequency.exponentialRampToValueAtTime(40, now + 0.06);
-        oscGain.gain.setValueAtTime(0.2, now);
+        oscGain.gain.setValueAtTime(0.12, now);
         oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
         break;
       case 'SHOTGUN':
@@ -232,7 +233,7 @@ class SoundManager {
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(80, now);
         osc.frequency.exponentialRampToValueAtTime(10, now + 0.15);
-        oscGain.gain.setValueAtTime(0.7, now);
+        oscGain.gain.setValueAtTime(0.3, now);
         oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
         break;
       case 'PISTOL':
@@ -241,7 +242,7 @@ class SoundManager {
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(180, now);
         osc.frequency.exponentialRampToValueAtTime(30, now + 0.1);
-        oscGain.gain.setValueAtTime(0.4, now);
+        oscGain.gain.setValueAtTime(0.2, now);
         oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
         break;
       case 'KNIFE': {
@@ -253,7 +254,7 @@ class SoundManager {
         swooshGain.gain.setValueAtTime(0.3, now);
         swooshGain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
         swooshOsc.connect(swooshGain);
-        swooshGain.connect(ctx.destination);
+        swooshGain.connect(this.master || ctx.destination);
         swooshOsc.start(now);
         swooshOsc.stop(now + 0.16);
         return;
@@ -264,18 +265,18 @@ class SoundManager {
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(130, now);
         osc.frequency.exponentialRampToValueAtTime(30, now + 0.1);
-        oscGain.gain.setValueAtTime(0.4, now);
+        oscGain.gain.setValueAtTime(0.2, now);
         oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
     }
     const noiseGain = ctx.createGain();
     const duration = type === 'SNIPER' ? 0.35 : type === 'SHOTGUN' ? 0.25 : type === 'LMG' ? 0.12 : type === 'SMG' ? 0.08 : 0.15;
-    noiseGain.gain.setValueAtTime(type === 'SNIPER' ? 0.8 : type === 'SHOTGUN' ? 0.9 : 0.5, now);
+    noiseGain.gain.setValueAtTime(type === 'SNIPER' ? 0.35 : type === 'SHOTGUN' ? 0.38 : 0.22, now);
     noiseGain.gain.exponentialRampToValueAtTime(0.01, now + duration);
     noise.connect(filter);
     filter.connect(noiseGain);
-    noiseGain.connect(ctx.destination);
+    noiseGain.connect(this.master || ctx.destination);
     osc.connect(oscGain);
-    oscGain.connect(ctx.destination);
+    oscGain.connect(this.master || ctx.destination);
     noise.start(now);
     noise.stop(now + duration);
     osc.start(now);
@@ -290,7 +291,7 @@ class SoundManager {
     if (!this.enabled) return;
     this.init();
     if (dist > 65) return;
-    if (this.playBuf(this.shootSampleFor(type), { vol: 0.42, jitter: 0.08, dist })) return;
+    if (this.playBuf(this.shootSampleFor(type), { vol: 0.16, jitter: 0.08, dist })) return;
     // Fallback: quiet synth shot
     if (dist < 22) this.playShoot(type);
   }
@@ -299,7 +300,7 @@ class SoundManager {
   playExplosion() {
     if (!this.enabled) return;
     this.init();
-    if (this.playBuf('explosion', { vol: 0.6, jitter: 0.04 })) return;
+    if (this.playBuf('explosion', { vol: 0.32, jitter: 0.04 })) return;
     // Synth fallback: filtered noise burst
     if (!this.ctx) return;
     const ctx = this.ctx;
@@ -315,9 +316,9 @@ class SoundManager {
     lp.frequency.setValueAtTime(900, now);
     lp.frequency.exponentialRampToValueAtTime(60, now + 0.7);
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.9, now);
+    g.gain.setValueAtTime(0.4, now);
     g.gain.exponentialRampToValueAtTime(0.01, now + 0.75);
-    noise.connect(lp); lp.connect(g); g.connect(ctx.destination);
+    noise.connect(lp); lp.connect(g); g.connect(this.master || ctx.destination);
     noise.start(now);
     noise.stop(now + 0.8);
   }
@@ -341,7 +342,7 @@ class SoundManager {
     gain.gain.setValueAtTime(0.08, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(this.master || ctx.destination);
     osc.start(now);
     osc.stop(now + 0.05);
   }
@@ -373,7 +374,7 @@ class SoundManager {
     gain1.gain.setValueAtTime(0.15, now);
     gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
     osc1.connect(gain1);
-    gain1.connect(ctx.destination);
+    gain1.connect(this.master || ctx.destination);
     osc1.start(now);
     osc1.stop(now + 0.06);
     setTimeout(() => {
@@ -387,7 +388,7 @@ class SoundManager {
       gain2.gain.setValueAtTime(0.15, tNow);
       gain2.gain.exponentialRampToValueAtTime(0.01, tNow + 0.08);
       osc2.connect(gain2);
-      gain2.connect(ctx.destination);
+      gain2.connect(this.master || ctx.destination);
       osc2.start(tNow);
       osc2.stop(tNow + 0.1);
     }, 350);
@@ -420,7 +421,7 @@ class SoundManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
     osc1.connect(gain);
     osc2.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(this.master || ctx.destination);
     osc1.start(now);
     osc1.stop(now + 0.12);
     osc2.start(now);
@@ -478,7 +479,7 @@ class SoundManager {
       gain.gain.setValueAtTime(0.2, now + idx * 0.2);
       gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.2 + duration);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(this.master || ctx.destination);
       osc.start(now);
       osc.stop(now + (idx + 1) * 0.2 + duration);
     });
