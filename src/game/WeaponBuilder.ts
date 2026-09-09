@@ -28,7 +28,7 @@ const FP_VIEWMODEL: Record<WeaponModelKind, { pos: [number, number, number]; rot
   lmg:      { pos: [0, -0.02, 0.16], rot: [0, 0, 0], scale: 0.95 },
   pistol:   { pos: [0.01, -0.05, 0.14], rot: [0, 0, 0], scale: 1.35 },
   revolver: { pos: [0.01, -0.05, 0.14], rot: [0, 0, 0], scale: 1.35 },
-  launcher: { pos: [0, -0.04, 0.22], rot: [0, 0, 0], scale: 0.9 },
+  launcher: { pos: [0, -0.04, 0.24], rot: [0, 0, 0], scale: 0.85 },
   katana:   { pos: [0.06, -0.10, 0.08], rot: [0.15, -0.45, 0.35], scale: 1.05 },
   knife:    { pos: [0.05, -0.08, 0.10], rot: [0.2, -0.5, 0.4], scale: 1.2 },
   sword:    { pos: [0.06, -0.10, 0.08], rot: [0.15, -0.45, 0.35], scale: 1.05 },

@@ -74,9 +74,13 @@ const SPECS: Record<WeaponModelKind, WeaponModelSpec> = {
   sniper:   { file: 'sniper.glb',     length: 1.15, gripY: 0.33, gripZ: 0.74, muzzleZ: -0.58 },
   shotgun:  { file: 'shotgun.glb',    length: 0.95, gripY: 0.30, gripZ: 0.74, muzzleZ: -0.46 },
   lmg:      { file: 'rifle.glb',      length: 1.00, gripY: 0.32, gripZ: 0.72, muzzleZ: -0.50, addon: 'drum' },
-  pistol:   { file: 'pistol.glb',     length: 0.28, gripY: 0.24, gripZ: 0.66, muzzleZ: -0.14 },
+  // Raw pistol.glb is authored along +X (muzzle at +X) — rotate +90° about Y
+  // so the muzzle lands on -Z like every other gun (measured in dev-lab).
+  pistol:   { file: 'pistol.glb',     length: 0.28, rotY: Math.PI / 2, gripY: 0.24, gripZ: 0.66, muzzleZ: -0.14 },
   revolver: { file: 'revolver.glb',   length: 0.30, gripY: 0.22, gripZ: 0.64, muzzleZ: -0.16 },
-  launcher: { file: 'blaster-e.glb',  length: 1.20, rotY: Math.PI, gripY: 0.42, gripZ: 0.58, muzzleZ: -0.60, addon: 'rpgTube', hideNodes: ['scope'] },
+  // blaster-e.glb already faces -Z raw (verified visually in dev-lab: at
+  // rotY +PI/2 the muzzle points -X ⇒ raw muzzle -Z). No pre-rotation.
+  launcher: { file: 'blaster-e.glb',  length: 1.20, gripY: 0.42, gripZ: 0.58, muzzleZ: -0.60, addon: 'rpgTube', hideNodes: ['scope'] },
   katana:   { file: 'katana.glb',     length: 1.05, gripY: 0.14, gripZ: 0.88 },
   knife:    { file: 'shortsword.glb', length: 0.45, gripY: 0.13, gripZ: 0.86 },
   sword:    { file: 'sword.glb',      length: 0.85, gripY: 0.13, gripZ: 0.86 },

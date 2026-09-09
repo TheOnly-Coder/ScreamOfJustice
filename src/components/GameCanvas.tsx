@@ -21,6 +21,7 @@ import { buildMap, CollidableBox } from '../game/MapBuilder';
 import { sounds } from '../lib/sounds';
 import { buildHighQualityFirstPersonWeapon, buildThirdPersonWeapon } from '../game/WeaponBuilder';
 import { preloadWeaponModels, weaponKindFor, isMeleeKind, buildWeaponModel, getWeaponModelClone, WeaponModelKind } from '../game/WeaponModelLoader';
+import { ViewModelRig } from '../game/ViewModelRig';
 import {
   preloadCharacterModel,
   tryCreateCharacterInstance,
@@ -832,6 +833,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Weapon visual meshes rigged to camera
     weaponGroup: THREE.Group | null;
+    vmRig: ViewModelRig | null;
     weaponMesh: THREE.Mesh | null;
     
     // Tutorial system
@@ -978,6 +980,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     bunnyHopConsecutiveJumps: 0,
     weaponGroup: null,
     weaponMesh: null,
+    vmRig: null,
     tutStage: 0,
     tutText: '',
     tutCharIdx: 0,
@@ -1543,7 +1546,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               // Rotation correction: + Math.PI ensures player model faces exact camera look direction
               pObj.meshGroup.rotation.y = pObj.yaw + Math.PI;
               if (pObj.upperBodyGroup) {
-                pObj.upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -pObj.pitch));
+                // Aim stance: broadcast ADS flag leans the upper body into the weapon
+                const aimLean = pData.isADS ? 0.18 : 0;
+                pObj.upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0) - aimLean));
               }
 
               // Update equipped weapon model if changed
@@ -1561,7 +1566,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const { meshGroup, upperBodyGroup, headMesh, torsoMesh, weaponMesh, activeWeaponId, characterInstance } = buildOtherPlayerMesh(pData.classId || 'assault', pData.name || 'Soldier', pData.activeWeaponId, remoteTint);
               meshGroup.position.set(pData.x, Math.max(0, (pData.y || 1.5) - 1.5), pData.z);
               meshGroup.rotation.y = (pData.yaw || 0) + Math.PI;
-              if (upperBodyGroup) upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0)));
+              if (upperBodyGroup) {
+                const aimLean0 = pData.isADS ? 0.18 : 0;
+                upperBodyGroup.rotation.x = Math.max(-1.2, Math.min(1.2, -(pData.pitch || 0) - aimLean0));
+              }
               scene.add(meshGroup);
               pObj = {
                 id: pData.id,
@@ -1940,9 +1948,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         game.slideMesh = null;
         game.slashMesh = null;
         game.weaponMesh = null;
+        game.vmRig?.setCurrentMesh(null, null);
         return;
       }
       buildHighQualityFirstPersonWeapon(game, game.weaponGroup, playerClass);
+      // Keep the FP rig in sync with the rebuilt mesh (springs re-target kind).
+      game.vmRig?.setCurrentMesh(
+        game.weaponMesh,
+        weaponKindFor(game.activeWeapon.id, game.activeWeapon.type as string, game.activeWeapon.name)
+      );
     };
 
         // ===== TUTORIAL SYSTEM =====
@@ -2010,9 +2024,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       tgtGrp.visible = false;
       scene.add(tgtGrp);
       game.tutTarget = tgtGrp;
-      // Create weapon group (hidden until pickup)
-      const weaponGroup = new THREE.Group();
-      scene.add(weaponGroup);
+      // Create weapon group (hidden until pickup) — dedicated FP weapon scene
+      game.vmRig = new ViewModelRig(camera.aspect);
+      const weaponGroup = game.vmRig.group;
       game.weaponGroup = weaponGroup;
       weaponGroup.visible = false;
     } else if (config.isCampaign && config.mapId === 'campaign2') {
@@ -2033,9 +2047,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       game.c2TruckGuardsSpawned = false;
       game.yaw = Math.PI; // Face north toward gate/base
 
-      // Create weapon group (player starts armed)
-      const weaponGroup = new THREE.Group();
-      scene.add(weaponGroup);
+      // Create weapon group (player starts armed) — dedicated FP weapon scene
+      game.vmRig = new ViewModelRig(camera.aspect);
+      const weaponGroup = game.vmRig.group;
       game.weaponGroup = weaponGroup;
       buildFirstPersonWeapon();
 
@@ -2216,15 +2230,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       });
 
-      // Create weapon group (hidden for cutscene)
-      const weaponGroup = new THREE.Group();
-      scene.add(weaponGroup);
+      // Create weapon group (hidden for cutscene) — dedicated FP weapon scene
+      game.vmRig = new ViewModelRig(camera.aspect);
+      const weaponGroup = game.vmRig.group;
       game.weaponGroup = weaponGroup;
       weaponGroup.visible = false;
     } else {
-// 3. Rig Weapon Group to Camera (First Person Gun model)
-    const weaponGroup = new THREE.Group();
-    scene.add(weaponGroup);
+// 3. Rig Weapon Group to Camera (First Person Gun model) — dedicated FP weapon scene
+    game.vmRig = new ViewModelRig(camera.aspect);
+    const weaponGroup = game.vmRig.group;
     game.weaponGroup = weaponGroup;
     
     if (config.spectatorMode) {
@@ -2895,6 +2909,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               game.weaponGroup.remove(game.weaponGroup.children[0]);
             }
             buildHighQualityFirstPersonWeapon(game, game.weaponGroup, playerClass);
+            game.vmRig?.setCurrentMesh(
+              game.weaponMesh,
+              weaponKindFor(game.activeWeapon.id, game.activeWeapon.type as string, game.activeWeapon.name)
+            );
             game.weaponGroup.visible = true;
           }
           pickedUpWeapon = true;
@@ -3593,20 +3611,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     const createTracerLine = (targetPos: THREE.Vector3) => {
-      // Find approximate muzzle barrel world position dynamically from the weaponMesh's matrix
+      // Find approximate muzzle barrel world position dynamically from the
+      // weaponMesh's matrix. The viewmodel lives in the weapon scene (camera-
+      // local space), so lift the muzzle point through the camera to world.
       let mPos = new THREE.Vector3(0, 0.01, -0.30);
-      if (game.weaponMesh) {
-        if (game.weaponGroup) {
-          game.weaponGroup.position.copy(camera.position);
-          game.weaponGroup.quaternion.copy(camera.quaternion);
-          game.weaponGroup.updateMatrixWorld(true);
-        }
+      if (game.weaponMesh && game.vmRig) {
         const muzzleObj = game.weaponMesh.getObjectByName('muzzlePoint');
         if (muzzleObj) {
           mPos.copy(muzzleObj.position);
         }
         game.weaponMesh.updateMatrixWorld(true);
-        mPos.applyMatrix4(game.weaponMesh.matrixWorld);
+        mPos.applyMatrix4(game.weaponMesh.matrixWorld); // camera-local
+        camera.updateMatrixWorld();
+        mPos.applyMatrix4(camera.matrixWorld);          // world
       } else if (camera) {
         mPos.applyMatrix4(camera.matrixWorld);
       }
@@ -3910,34 +3927,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // 1. Rig First Person Weapons (Position lock, Recoil return & Bobbing/Swaying)
-      if (game.weaponGroup && !game.playerIsDead) {
-        // Set position relative to camera
-        game.weaponGroup.position.copy(camera.position);
-        
-        // Weapon look sway/lag (tight camera follow)
-        const targetQuat = camera.quaternion.clone();
-        game.weaponGroup.quaternion.slerp(targetQuat, 45 * delta);
-
-        // Recoil is applied at the end now
-
-        // Calculate dynamic walking bobbing & swaying vectors
+      // 1. Rig First Person Weapon — dedicated weapon scene + spring physics.
+      // The viewmodel renders in its own scene on top of the world (two-pass),
+      // rigidly framed by a fixed-FOV weapon camera: it can never lag behind
+      // the camera (the old cause of clipping while running / aiming), can
+      // never intersect world geometry, and ADS zoom never magnifies it.
+      if (game.vmRig && game.weaponGroup && game.hasWeapon && !game.playerIsDead
+          && !(config.isCampaign && config.mapId === 'campaign3')) {
+        const w = game.activeWeapon;
         const speed2D = Math.sqrt(game.playerVel.x * game.playerVel.x + game.playerVel.z * game.playerVel.z);
-        const bobY = (speed2D > 0.1 && !game.isADS) ? Math.sin(time * 0.01) * 0.012 : 0;
-        const bobX = (speed2D > 0.1 && !game.isADS) ? Math.cos(time * 0.005) * 0.008 : 0;
+        game.vmRig.update(delta, {
+          kind: weaponKindFor(w.id, w.type as string, w.name),
+          isADS: game.isADS,
+          speed2D,
+          vel: game.playerVel,
+          grounded: Math.abs(game.playerVel.y) < 0.6,
+          yaw: game.yaw,
+          pitch: game.pitch,
+          recoilOffsetZ: game.recoilOffset.z,
+          recoilRotX: game.recoilRot.x,
+          recoilRotY: game.recoilRot.y,
+          meleeActive: game.meleeSwingProgress > 0,
+          hideInAds: (w.zoomFov || 75) <= 30,
+        });
 
-        // ADS Lerping (When scoped, lerp gun to center)
-        const targetX = game.isADS ? 0 : (0.18 + bobX);
-        const targetY = game.isADS ? -0.11 : (-0.22 + bobY);
-        const targetZ = game.isADS ? -0.32 : (-0.45 - game.recoilOffset.z);
-
-        if (game.weaponMesh && game.meleeSwingProgress === 0) {
-          game.weaponMesh.position.x += (targetX - game.weaponMesh.position.x) * 0.18;
-          game.weaponMesh.position.y += (targetY - game.weaponMesh.position.y) * 0.18;
-          game.weaponMesh.position.z += (targetZ - game.weaponMesh.position.z) * 0.18;
-        }
-
-        // Camera FOV Lerp (ADS zoom)
+        // Camera FOV Lerp (ADS zoom — world only; the viewmodel is immune)
         const targetFov = game.isADS ? game.activeWeapon.zoomFov : 75;
         if (camera.fov !== targetFov) {
           camera.fov += (targetFov - camera.fov) * 0.15;
@@ -4452,15 +4466,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           (game.muzzleFlash.material as THREE.MeshBasicMaterial).opacity = 0;
           game.muzzleFlashLight.intensity = 0;
         } else {
-          // Position muzzle flash at actual gun muzzle tip using the gun world matrix!
+          // Position muzzle flash at actual gun muzzle tip. The viewmodel
+          // lives in the weapon scene (camera-local) — lift through camera.
       let mPos = new THREE.Vector3(0, 0.01, -0.30);
-      if (game.weaponMesh) {
+      if (game.weaponMesh && game.vmRig) {
         const muzzleObj = game.weaponMesh.getObjectByName('muzzlePoint');
         if (muzzleObj) {
           mPos.copy(muzzleObj.position);
         }
         game.weaponMesh.updateMatrixWorld(true);
-        mPos.applyMatrix4(game.weaponMesh.matrixWorld);
+        mPos.applyMatrix4(game.weaponMesh.matrixWorld); // camera-local
+        camera.updateMatrixWorld();
+        mPos.applyMatrix4(camera.matrixWorld);          // world
       } else if (camera) {
         mPos.applyMatrix4(camera.matrixWorld);
       }
@@ -6111,6 +6128,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Render Next Frame
       if (game.renderer && game.scene && game.camera && !someoneWon) {
         game.renderer.render(game.scene, game.camera);
+        // First-person viewmodel pass — dedicated weapon scene drawn on top
+        // with its own fixed-FOV camera (never clips world or near plane).
+        if (game.vmRig && game.weaponGroup && game.weaponGroup.visible
+            && game.hasWeapon && !game.playerIsDead
+            && !(config.isCampaign && config.mapId === 'campaign3')) {
+          const r = game.renderer;
+          r.autoClear = false;
+          r.clearDepth();
+          r.render(game.vmRig.scene, game.vmRig.camera);
+          r.autoClear = true;
+        }
         game.frameId = requestAnimationFrame(animate);
       }
     };
